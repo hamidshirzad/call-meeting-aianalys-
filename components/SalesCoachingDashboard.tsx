@@ -129,6 +129,23 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
     }
   }, [analysisReport, calculateSegmentStartTimes]);
   
+  // Add keyboard shortcut for analyzing the call
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === 's') {
+        event.preventDefault(); // Prevent browser's save action
+        // analyzeCall function already checks conditions (file selected, not loading, etc.)
+        analyzeCall();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [analyzeCall]);
+
   const kpis = React.useMemo(() => {
     if (!analysisReport) return null;
     const avgSentiment = analysisReport.sentimentData.length > 0 ? analysisReport.sentimentData.reduce((acc, d) => acc + d.score, 0) / analysisReport.sentimentData.length : 0;

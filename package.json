@@ -13,7 +13,9 @@
     "react-dom": "^19.2.0",
     "react": "^19.2.0",
     "@google/genai": "^1.29.0",
-    "framer-motion": "^11.3.11"
+    "framer-motion": "^11.3.11",
+    "flags": "^4.0.2",
+    "@flags-sdk/statsig": "^0.2.5"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
