@@ -46,31 +46,31 @@ function createBlob(data: Float32Array): { data: string; mimeType: string } {
   for (let i = 0; i < l; i++) {
     int16[i] = data[i] * 32768;
   }
-  // The guideline's `createBlob` example for `sendRealtimeInput` expects `Uint8Array` in `encode`.
-  // `new Uint8Array(int16.buffer)` correctly converts Int16Array's underlying ArrayBuffer to Uint8Array.
   return {
     data: encode(new Uint8Array(int16.buffer)),
     mimeType: 'audio/pcm;rate=16000',
   };
 }
 
+// Helper to get the Gemini AI client, prioritizing the user's key
+const getAiClient = (userApiKey?: string) => {
+    const apiKey = userApiKey || process.env.API_KEY;
+    if (!apiKey) {
+        throw new Error("API key is not configured. Please add your key in Settings -> Developer API.");
+    }
+    return new GoogleGenAI({ apiKey });
+};
+
 
 export const geminiService = {
   // Transcribes and analyzes an uploaded sales call audio
-  async analyzeSalesCallAudio(audioBase64: string): Promise<Omit<SalesCallAnalysisReport, 'id' | 'timestamp'>> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  async analyzeSalesCallAudio(audioBase64: string, userApiKey?: string): Promise<Omit<SalesCallAnalysisReport, 'id' | 'timestamp'>> {
+    const ai = getAiClient(userApiKey);
     const modelFlash = 'gemini-2.5-flash';
     const modelPro = 'gemini-2.5-pro';
 
-    // Step 1: Transcribe and diarize the audio using gemini-2.5-flash
     const transcriptionPrompt = `
       Transcribe the following sales call audio. Identify and label two distinct speakers as 'Speaker A' and 'Speaker B'. Format the output as a JSON array of objects, where each object has 'speaker' (string) and 'text' (string) properties. Ensure the transcription is accurate and covers the entire audio content.
-
-      Example format:
-      [
-        { "speaker": "Speaker A", "text": "Hello, thank you for calling." },
-        { "speaker": "Speaker B", "text": "Hi, I'm interested in your new product." }
-      ]
     `;
 
     const transcriptionResponse: GenerateContentResponse = await ai.models.generateContent({
@@ -105,17 +105,13 @@ export const geminiService = {
     });
 
     const diarizedTranscript: DiarizedSegment[] = JSON.parse(transcriptionResponse.text.trim());
-
     const fullTranscriptText = diarizedTranscript.map(s => `${s.speaker}: ${s.text}`).join('\n');
 
-    // Step 2: Analyze the transcript for sentiment and coaching using gemini-2.5-pro
     const analysisPrompt = `
       Given the following sales call transcript, perform two tasks:
       1. Sentiment Analysis: Break down the transcript into logical segments. For each segment, provide a sentiment score from -1 (very negative) to 1 (very positive).
       2. Coaching Card: Identify 3 specific things the salesperson (Speaker A) did well and 3 specific missed opportunities.
-
       Format the entire output as a single JSON object.
-
       Transcript:
       ${fullTranscriptText}
     `;
@@ -161,9 +157,7 @@ export const geminiService = {
 
     const analysisResult = JSON.parse(analysisResponse.text.trim());
 
-    // Step 3: Generate a brief, one-paragraph summary using gemini-2.5-flash
     const summaryPrompt = `Generate a brief, one-paragraph summary of the sales call, highlighting the main topics discussed and the overall outcome based on the following transcript:\n\n${fullTranscriptText}`;
-
     const summaryResponse: GenerateContentResponse = await ai.models.generateContent({
       model: modelFlash,
       contents: [{ parts: [{ text: summaryPrompt }] }],
@@ -185,9 +179,10 @@ export const geminiService = {
     onTurnComplete: (fullInput: string, fullOutput: string) => void,
     onError: (error: ErrorEvent) => void,
     onClose: (event: CloseEvent) => void,
-    onVolumeUpdate: (volume: number) => void
+    onVolumeUpdate: (volume: number) => void,
+    userApiKey?: string,
   ): Promise<{ session: any; stopTranscriptionSession: () => void }> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = getAiClient(userApiKey);
     const model = 'gemini-2.5-flash-native-audio-preview-09-2025';
 
     let currentInputTranscription = '';
@@ -275,67 +270,79 @@ export const geminiService = {
     aspectRatio: '16:9' | '9:16',
     setStatusMessage: (message: string) => void,
   ): Promise<string> {
-    if (typeof window !== 'undefined' && (window as any).aistudio) {
-      const hasKey = await (window as any).aistudio.hasSelectedApiKey();
-      if (!hasKey) {
-        setStatusMessage('Please select your API key before generating video.');
-        await (window as any).aistudio.openSelectKey();
-        setStatusMessage('API key selected. Retrying video generation...');
-      }
+    if (typeof window === 'undefined' || !(window as any).aistudio) {
+        throw new Error("Video generation is only supported in a compatible environment.");
     }
 
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+    if (!hasKey) {
+        setStatusMessage('Please select your API key before generating video.');
+        await (window as any).aistudio.openSelectKey();
+        // User must click the generate button again after selecting a key.
+        // Throw a user-friendly error to be displayed in the UI.
+        throw new Error("API key selected. Please click 'Generate Video' again to proceed.");
+    }
+
+    // Per Veo guidelines, create a new client with the key from the aistudio dialog (process.env.API_KEY).
+    // This ignores the customApiKey from user settings for this specific feature.
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+        throw new Error("API key is not configured. Please select your key and try again.");
+    }
+    const ai = new GoogleGenAI({ apiKey });
 
     try {
-      setStatusMessage('Sending video generation request...');
-      let operation = await ai.models.generateVideos({
-        model: 'veo-3.1-fast-generate-preview',
-        prompt: prompt,
-        image: {
-          imageBytes: imageBase64,
-          mimeType: imageMimeType,
-        },
-        config: {
-          numberOfVideos: 1,
-          resolution: '720p',
-          aspectRatio: aspectRatio,
-        },
-      });
+        setStatusMessage('Sending video generation request...');
+        let operation = await ai.models.generateVideos({
+            model: 'veo-3.1-fast-generate-preview',
+            prompt: prompt,
+            image: {
+                imageBytes: imageBase64,
+                mimeType: imageMimeType,
+            },
+            config: {
+                numberOfVideos: 1,
+                resolution: '720p',
+                aspectRatio: aspectRatio,
+            },
+        });
 
-      setStatusMessage('Video generation in progress. This may take a few minutes...');
-      while (!operation.done) {
-        await new Promise(resolve => setTimeout(resolve, 10000));
-        operation = await ai.operations.getVideosOperation({ operation: operation });
-        if (operation.metadata?.state) {
-          setStatusMessage(`Video generation state: ${operation.metadata.state}...`);
+        setStatusMessage('Video generation in progress. This may take a few minutes...');
+        while (!operation.done) {
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            operation = await ai.operations.getVideosOperation({ operation: operation });
+            if (operation.metadata?.state) {
+                setStatusMessage(`Video generation state: ${operation.metadata.state}...`);
+            }
         }
-      }
 
-      const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-      if (!downloadLink) {
-        throw new Error("No video download link found in the operation response.");
-      }
-
-      setStatusMessage('Video generated! Fetching video data...');
-      const response = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
-      if (!response.ok) {
-        const errorText = await response.text();
-        if (errorText.includes("Requested entity was not found.") && typeof window !== 'undefined' && (window as any).aistudio) {
-          setStatusMessage('API key might be invalid or expired. Please re-select your API key.');
-          await (window as any).aistudio.openSelectKey();
+        const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+        if (!downloadLink) {
+            throw new Error("No video download link found in the operation response.");
         }
-        throw new Error(`Failed to fetch video: ${response.statusText} - ${errorText}`);
-      }
 
-      const videoBlob = await response.blob();
-      return URL.createObjectURL(videoBlob);
+        setStatusMessage('Video generated! Fetching video data...');
+        const response = await fetch(`${downloadLink}&key=${apiKey}`);
+        if (!response.ok) {
+            const errorText = await response.text();
+            if (errorText.includes("Requested entity was not found.")) {
+                setStatusMessage('API key might be invalid or expired. Please re-select your API key.');
+                await (window as any).aistudio.openSelectKey();
+                throw new Error("API key re-selected. Please click 'Generate Video' again to retry.");
+            }
+            throw new Error(`Failed to fetch video: ${response.statusText} - ${errorText}`);
+        }
+
+        const videoBlob = await response.blob();
+        return URL.createObjectURL(videoBlob);
     } catch (error: any) {
-      console.error("Error during video generation:", error);
-      if (error instanceof Error && error.message.includes("Requested entity was not found.") && typeof window !== 'undefined' && (window as any).aistudio) {
-        setStatusMessage('API key might be invalid or expired. Please re-select your API key.');
-        await (window as any).aistudio.openSelectKey();
-      }
-      throw error;
+        console.error("Error during video generation:", error);
+        if (error instanceof Error && error.message.includes("Requested entity was not found.")) {
+            setStatusMessage('API key might be invalid or expired. Please re-select your API key.');
+            await (window as any).aistudio.openSelectKey();
+            throw new Error("API key re-selected. Please click 'Generate Video' again to retry.");
+        }
+        throw error;
     }
   },
 
@@ -343,9 +350,10 @@ export const geminiService = {
   async getChatResponse(
     history: ChatMessage[],
     newMessage: string,
-    context: SalesCallAnalysisReport | null
+    context: SalesCallAnalysisReport | null,
+    userApiKey?: string,
   ): Promise<string> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = getAiClient(userApiKey);
     const model = 'gemini-2.5-pro';
 
     let systemInstruction = "You are a helpful AI assistant specialized in sales coaching. You can answer questions about sales techniques, analyze call data, and provide coaching advice.";
@@ -371,8 +379,8 @@ export const geminiService = {
   },
   
   // New method for getting a daily coaching tip
-  async getCoachingTip(): Promise<string> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  async getCoachingTip(userApiKey?: string): Promise<string> {
+    const ai = getAiClient(userApiKey);
     const model = 'gemini-2.5-flash';
     const prompt = "Generate a single, concise, and actionable sales coaching tip of the day. It should be one or two sentences long.";
 

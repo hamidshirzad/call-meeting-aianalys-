@@ -15,7 +15,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useLocalStorage } from './hooks/useLocalStorage';
 
 const App: React.FC = () => {
-  const [activeFeature, setActiveFeature] = useLocalStorage<AppFeature>('app-feature', 'sales-coaching');
+  const [activeFeature, setActiveFeature] = useLocalStorage<AppFeature>('app-feature', 'my-progress');
   const [isDarkMode, setIsDarkMode] = useLocalStorage('dark-mode', false);
   const [analysisReport, setAnalysisReport] = useLocalStorage<SalesCallAnalysisReport | null>('analysis-report', null);
   const [historicalAnalyses, setHistoricalAnalyses] = useLocalStorage<SalesCallAnalysisReport[]>('historical-analyses', []);
@@ -24,13 +24,13 @@ const App: React.FC = () => {
   
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState<boolean>(false);
 
-  // --- SaaS State Management ---
   const initialUserDetails: UserDetails = {
     id: 'user_12345',
     name: 'Valued User',
     email: 'user@example.com',
     plan: 'free',
     subscriptionEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    customApiKey: '',
     apiKeys: [{
         key: 'sk_live_free_user_key_00000',
         label: 'Default Key',
@@ -47,7 +47,6 @@ const App: React.FC = () => {
 
   const [user, setUser] = useLocalStorage<UserDetails>('user-details', initialUserDetails);
   
-  // Weekly analysis count for free tier
   const [analysesThisWeek, setAnalysesThisWeek] = useLocalStorage<number>('analysesThisWeekCount', 0);
   const [lastAnalysisDate, setLastAnalysisDate] = useLocalStorage<string>('lastAnalysisDate', '');
   
@@ -59,13 +58,14 @@ const App: React.FC = () => {
     apiCredits: 0
   });
 
-  // Reset weekly analysis count if a new week has started
+  // Grant Pro access if user provides their own key
+  const effectivePlan = user.customApiKey ? 'pro' : user.plan;
+
   useEffect(() => {
     const today = new Date();
     const lastDate = lastAnalysisDate ? new Date(lastAnalysisDate) : new Date(0);
     const msSinceLast = today.getTime() - lastDate.getTime();
     const daysSinceLast = msSinceLast / (1000 * 3600 * 24);
-    // If it's a new week (Sunday is 0)
     if (today.getDay() < lastDate.getDay() || daysSinceLast >= 7) {
         setAnalysesThisWeek(0);
     }
@@ -86,12 +86,9 @@ const App: React.FC = () => {
       const newHistorical = [report, ...historicalAnalyses.slice(0, 19)];
       setHistoricalAnalyses(newHistorical);
 
-      setGamification(prev => ({
-          ...prev,
-          streak: prev.streak + 1,
-      }));
+      setGamification(prev => ({ ...prev, streak: prev.streak + 1 }));
       
-      if(user.plan === 'free') {
+      if(user.plan === 'free' && !user.customApiKey) {
         const newCount = analysesThisWeek + 1;
         setAnalysesThisWeek(newCount);
         localStorage.setItem('analysesThisWeekCount', newCount.toString());
@@ -101,19 +98,12 @@ const App: React.FC = () => {
       const newNotif = (message: string, type: 'success' | 'info' = 'success') => ({
           id: `notif_${Date.now()}`, message, timestamp: new Date().toISOString(), read: false, type
       });
-
       let newNotifications = [newNotif(`Analysis complete for call ${report.id.slice(-6)}.`)];
 
-      // Achievement check: 10 calls analyzed
       if (newHistorical.length === 10 && !gamification.badges.includes('Analyst_10')) {
-        setGamification(prev => ({
-            ...prev,
-            badges: [...prev.badges, 'Analyst_10'],
-            apiCredits: prev.apiCredits + 500,
-        }));
+        setGamification(prev => ({ ...prev, badges: [...prev.badges, 'Analyst_10'], apiCredits: prev.apiCredits + 500 }));
         newNotifications.push(newNotif('Achievement Unlocked: Call Analyst! You earned 500 bonus API credits.', 'info'));
       }
-
       setNotifications(prev => [...newNotifications, ...prev]);
 
       const proactiveMessage: ChatMessage = {
@@ -121,9 +111,8 @@ const App: React.FC = () => {
           text: `I've finished analyzing your latest call. A key opportunity I found was: "${report.coachingCard.opportunities[0]}". Would you like me to elaborate on that?`
       };
       setChatMessages(prev => [...prev, proactiveMessage]);
-
     }
-  }, [analysisReport, historicalAnalyses, setHistoricalAnalyses, setGamification, setNotifications, setChatMessages, user.plan, analysesThisWeek, setAnalysesThisWeek, setLastAnalysisDate, gamification.badges]);
+  }, [analysisReport, historicalAnalyses, setHistoricalAnalyses, setGamification, setNotifications, setChatMessages, user.plan, user.customApiKey, analysesThisWeek, setAnalysesThisWeek, setLastAnalysisDate, gamification.badges]);
 
   const toggleDarkMode = () => setIsDarkMode(!isDarkMode);
 
@@ -139,15 +128,15 @@ const App: React.FC = () => {
                     setActiveFeature={setActiveFeature as any}
                 />;
       case 'live-mic':
-        return <LiveMicTranscriber />;
+        return <LiveMicTranscriber user={user} />;
       case 'video-generator':
-        return <VideoGenerator />;
+        return <VideoGenerator user={user} />;
       case 'chat-assistant':
         return <ChatAssistant 
                     analysisContext={analysisReport} 
                     messages={chatMessages}
                     setMessages={setChatMessages}
-                    userPlan={user.plan}
+                    user={user}
                     setActiveFeature={setActiveFeature as any}
                 />;
       case 'my-progress':
@@ -174,13 +163,14 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex bg-slate-100 dark:bg-slate-900">
-      <Sidebar activeFeature={activeFeature} setActiveFeature={setActiveFeature} userPlan={user.plan} />
+      <Sidebar activeFeature={activeFeature} setActiveFeature={setActiveFeature} userPlan={effectivePlan} />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header 
           isDarkMode={isDarkMode} 
           toggleDarkMode={toggleDarkMode} 
           notifications={notifications}
           setNotifications={setNotifications}
+          user={user}
         />
         <main className="flex-grow overflow-y-auto custom-scrollbar">
           <AnimatePresence mode="wait">

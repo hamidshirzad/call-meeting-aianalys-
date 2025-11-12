@@ -86,4 +86,5 @@ export interface UserDetails {
     subscriptionEndDate: string;
     apiKeys: ApiKey[];
     usage: ApiUsageStats;
+    customApiKey?: string; // To store user's personal Gemini key
 }

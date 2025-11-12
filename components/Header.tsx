@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AppNotification } from '../types';
+import { AppNotification, UserDetails } from '../types';
 import NotificationCenter from './NotificationCenter';
 import { AnimatePresence } from 'framer-motion';
 
@@ -8,9 +8,10 @@ interface HeaderProps {
   toggleDarkMode: () => void;
   notifications: AppNotification[];
   setNotifications: (notifications: AppNotification[]) => void;
+  user: UserDetails;
 }
 
-const Header: React.FC<HeaderProps> = ({ isDarkMode, toggleDarkMode, notifications, setNotifications }) => {
+const Header: React.FC<HeaderProps> = ({ isDarkMode, toggleDarkMode, notifications, setNotifications, user }) => {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -54,8 +55,8 @@ const Header: React.FC<HeaderProps> = ({ isDarkMode, toggleDarkMode, notificatio
             </AnimatePresence>
           </div>
 
-          <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-emerald-500 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-md">
-            U
+          <div className="w-10 h-10 bg-gradient-to-br from-teal-400 to-cyan-500 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-md">
+            {user.name.charAt(0).toUpperCase()}
           </div>
         </div>
       </div>

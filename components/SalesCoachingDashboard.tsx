@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { SalesCallAnalysisReport, UserDetails } from '../types';
+import { SalesCallAnalysisReport, UserDetails, AppFeature } from '../types';
 import { geminiService } from '../services/geminiService';
 import TranscriptionDisplay from './TranscriptionDisplay';
 import SentimentGraph from './SentimentGraph';
@@ -15,7 +15,7 @@ interface SalesCoachingDashboardProps {
     isLoading: boolean;
     setIsLoading: (loading: boolean) => void;
     user: UserDetails;
-    setActiveFeature: (feature: 'billing') => void;
+    setActiveFeature: (feature: AppFeature) => void;
 }
 
 const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysisReport, setAnalysisReport, isLoading, setIsLoading, user, setActiveFeature }) => {
@@ -34,7 +34,7 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   
-  const isFreeTier = user.plan === 'free';
+  const isFreeTier = user.plan === 'free' && !user.customApiKey; // Free tier only applies if no custom key
   const weeklyAnalysisLimit = 5;
   const analysesThisWeek = parseInt(localStorage.getItem('analysesThisWeekCount') || '0', 10);
   const limitReached = isFreeTier && analysesThisWeek >= weeklyAnalysisLimit;
@@ -104,15 +104,13 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
       reader.onloadend = async () => {
         if (typeof reader.result === 'string') {
           const base64Audio = reader.result.split(',')[1];
-          const reportData = await geminiService.analyzeSalesCallAudio(base64Audio);
+          const reportData = await geminiService.analyzeSalesCallAudio(base64Audio, user.customApiKey);
           const fullReport: SalesCallAnalysisReport = {
               ...reportData,
               id: `call_${new Date().getTime()}`,
               timestamp: new Date().toISOString(),
           };
           setAnalysisReport(fullReport);
-          // This would be done in App.tsx now to update global state
-          // localStorage.setItem('analysesThisWeekCount', (analysesThisWeek + 1).toString());
         } else throw new Error("Failed to read audio file.");
       };
     } catch (err: any) {
@@ -121,7 +119,7 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
     } finally {
       setIsLoading(false);
     }
-  }, [selectedFile, setIsLoading, setAnalysisReport, limitReached]);
+  }, [selectedFile, setIsLoading, setAnalysisReport, limitReached, user.customApiKey]);
 
   useEffect(() => {
     if (audioRef.current && analysisReport && audioRef.current.readyState >= 2) {
@@ -129,22 +127,20 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
     }
   }, [analysisReport, calculateSegmentStartTimes]);
   
-  // Add keyboard shortcut for analyzing the call
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 's') {
-        event.preventDefault(); // Prevent browser's save action
-        // analyzeCall function already checks conditions (file selected, not loading, etc.)
-        analyzeCall();
+        event.preventDefault();
+        if (!isLoading && selectedFile) {
+            analyzeCall();
+        }
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
-
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [analyzeCall]);
+  }, [analyzeCall, isLoading, selectedFile]);
 
   const kpis = React.useMemo(() => {
     if (!analysisReport) return null;
@@ -158,6 +154,20 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
 
   return (
     <div className="container mx-auto p-4 sm:p-6 lg:p-8">
+       {isFreeTier && (
+            <div className="bg-gradient-to-r from-indigo-500 to-emerald-500 text-white p-6 rounded-lg shadow-lg mb-8 flex flex-col md:flex-row items-center justify-between gap-4">
+                <div>
+                    <h3 className="font-bold text-xl">Unlock Full Access with Your Own API Key</h3>
+                    <p className="text-indigo-100 mt-1">Bypass weekly limits and get all Pro features by using your personal Google Gemini API key.</p>
+                </div>
+                <button 
+                    onClick={() => setActiveFeature('developer-settings')}
+                    className="bg-white text-indigo-600 font-bold py-2 px-5 rounded-lg shadow-md hover:bg-indigo-50 transition-transform transform hover:scale-105 flex-shrink-0"
+                >
+                    Add Your Key
+                </button>
+            </div>
+        )}
        {isFreeTier && analysesThisWeek >= 4 && (
             <div className="bg-yellow-100 dark:bg-yellow-900/50 border-l-4 border-yellow-500 text-yellow-800 dark:text-yellow-200 p-4 mb-6 rounded-r-lg shadow-md">
                 <p className="font-bold">Usage Limit Warning</p>
@@ -165,7 +175,7 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
             </div>
         )}
        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            <TipOfTheDay />
+            <TipOfTheDay user={user} />
             <GamificationStats />
         </div>
       <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-lg mb-8 transition-shadow hover:shadow-xl">

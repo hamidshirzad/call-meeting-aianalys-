@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { SalesCallAnalysisReport, ChatMessage, SubscriptionPlan, AppFeature } from '../types';
+import { SalesCallAnalysisReport, ChatMessage, UserDetails } from '../types';
 import { geminiService } from '../services/geminiService';
 
 interface ChatAssistantProps {
   analysisContext: SalesCallAnalysisReport | null;
   messages: ChatMessage[];
   setMessages: (messages: ChatMessage[]) => void;
-  userPlan: SubscriptionPlan;
+  user: UserDetails;
   setActiveFeature: (feature: 'billing') => void;
 }
 
@@ -17,10 +17,12 @@ const suggestionChips = [
     "Compare my last 3 calls" // Pro feature
 ];
 
-const ChatAssistant: React.FC<ChatAssistantProps> = ({ analysisContext, messages, setMessages, userPlan, setActiveFeature }) => {
+const ChatAssistant: React.FC<ChatAssistantProps> = ({ analysisContext, messages, setMessages, user, setActiveFeature }) => {
   const [userInput, setUserInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  const userPlan = user.customApiKey ? 'pro' : user.plan;
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -40,7 +42,6 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ analysisContext, messages
   const handleSend = async (messageText: string) => {
     if (!messageText.trim()) return;
     
-    // Plan-based feature check
     if (userPlan === 'free' && messageText.toLowerCase().includes('compare')) {
       const proFeatureMessage: ChatMessage = { role: 'model', text: "Comparing multiple calls is a Pro feature. It allows you to track your progress and identify trends over time. Would you like to upgrade to unlock this and other advanced features?" };
       setMessages([...messages, {role: 'user', text: messageText}, proFeatureMessage]);
@@ -55,7 +56,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ analysisContext, messages
 
     try {
       const history = messages.filter(m => m.role !== 'model' || m.text.includes('sales call analysis') === false);
-      const modelResponse = await geminiService.getChatResponse(history, messageText, analysisContext);
+      const modelResponse = await geminiService.getChatResponse(history, messageText, analysisContext, user.customApiKey);
       setMessages([...currentMessages, { role: 'model', text: modelResponse }]);
     } catch (error) {
       console.error('Chat error:', error);

@@ -1,15 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { geminiService } from '../services/geminiService';
 import SkeletonLoader from './SkeletonLoader';
+import { UserDetails } from '../types';
 
-const TipOfTheDay: React.FC = () => {
+interface TipOfTheDayProps {
+    user: UserDetails;
+}
+
+const TipOfTheDay: React.FC<TipOfTheDayProps> = ({ user }) => {
     const [tip, setTip] = useState<string>('');
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
         const fetchTip = async () => {
             try {
-                // To avoid fetching on every render, we can cache this in localStorage for a day
                 const cachedTip = localStorage.getItem('tip-of-the-day');
                 const lastFetch = localStorage.getItem('tip-last-fetch');
                 const today = new Date().toDateString();
@@ -17,7 +21,7 @@ const TipOfTheDay: React.FC = () => {
                 if (cachedTip && lastFetch === today) {
                     setTip(cachedTip);
                 } else {
-                    const newTip = await geminiService.getCoachingTip();
+                    const newTip = await geminiService.getCoachingTip(user.customApiKey);
                     setTip(newTip);
                     localStorage.setItem('tip-of-the-day', newTip);
                     localStorage.setItem('tip-last-fetch', today);
@@ -31,7 +35,7 @@ const TipOfTheDay: React.FC = () => {
         };
 
         fetchTip();
-    }, []);
+    }, [user.customApiKey]);
 
     return (
         <div className="bg-gradient-to-br from-indigo-500 to-emerald-500 text-white p-6 rounded-lg shadow-lg transition-shadow hover:shadow-xl">
