@@ -1,0 +1,7 @@
+{
+  "name": "Sales Coaching Intelligence Platform",
+  "description": "An AI-powered platform for sales call analysis, providing diarized transcripts, sentiment graphs, and AI-generated coaching cards. Also includes a live microphone transcriber and a video generation feature.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
