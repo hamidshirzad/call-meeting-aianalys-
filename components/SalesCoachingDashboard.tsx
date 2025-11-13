@@ -16,10 +16,11 @@ interface SalesCoachingDashboardProps {
     isLoading: boolean;
     setIsLoading: (loading: boolean) => void;
     user: UserDetails;
+    setUser: (user: UserDetails) => void;
     setActiveFeature: (feature: AppFeature) => void;
 }
 
-const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysisReport, setAnalysisReport, isLoading, setIsLoading, user, setActiveFeature }) => {
+const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysisReport, setAnalysisReport, isLoading, setIsLoading, user, setUser, setActiveFeature }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +33,10 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
     positive: 0.3,
   });
 
+  const [emailBannerDismissed, setEmailBannerDismissed] = useState(() => sessionStorage.getItem('emailBannerDismissed') === 'true');
+  const [emailInput, setEmailInput] = useState('');
+  const showEmailBanner = user.email === 'user@example.com' && !emailBannerDismissed;
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   
@@ -39,6 +44,23 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
   const weeklyAnalysisLimit = 5;
   const analysesThisWeek = parseInt(localStorage.getItem('analysesThisWeekCount') || '0', 10);
   const limitReached = isFreeTier && analysesThisWeek >= weeklyAnalysisLimit;
+
+  const handleDismissBanner = () => {
+    sessionStorage.setItem('emailBannerDismissed', 'true');
+    setEmailBannerDismissed(true);
+  };
+    
+  const handleSaveEmail = () => {
+      if (emailInput.trim() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput)) {
+          const name = emailInput.split('@')[0]
+              .replace(/[\._-]/g, ' ')
+              .split(' ')
+              .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+              .join(' ');
+          setUser({ ...user, email: emailInput, name: name });
+          handleDismissBanner();
+      }
+  };
 
   useEffect(() => {
     return () => {
@@ -100,25 +122,34 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
     setSegmentStartTimes([]);
 
     try {
-      const reader = new FileReader();
-      reader.readAsDataURL(selectedFile);
-      reader.onloadend = async () => {
-        if (typeof reader.result === 'string') {
-          const base64Audio = reader.result.split(',')[1];
-          const reportData = await geminiService.analyzeSalesCallAudio(base64Audio, selectedFile.type, user.customApiKey);
-          const fullReport: SalesCallAnalysisReport = {
-              ...reportData,
-              id: `call_${new Date().getTime()}`,
-              timestamp: new Date().toISOString(),
-          };
-          setAnalysisReport(fullReport);
-        } else throw new Error("Failed to read audio file.");
-      };
+        const base64Audio = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(selectedFile);
+            reader.onload = () => {
+                if (typeof reader.result === 'string') {
+                    resolve(reader.result.split(',')[1]);
+                } else {
+                    reject(new Error("Failed to read audio file."));
+                }
+            };
+            reader.onerror = (error) => reject(error);
+        });
+
+        const reportData = await geminiService.analyzeSalesCallAudio(base64Audio, selectedFile.type, user.customApiKey);
+        const fullReport: SalesCallAnalysisReport = {
+            ...reportData,
+            id: `call_${new Date().getTime()}`,
+            timestamp: new Date().toISOString(),
+        };
+        setAnalysisReport(fullReport);
+
     } catch (err: any) {
-      setError(err.message || "An unexpected error occurred.");
-      setAnalysisReport(null);
+        console.error("Analysis failed:", err);
+        const errorMessage = `Analysis failed: ${err.message || "An unknown error occurred."}`;
+        setError(errorMessage);
+        setAnalysisReport(null);
     } finally {
-      setIsLoading(false);
+        setIsLoading(false);
     }
   }, [selectedFile, setIsLoading, setAnalysisReport, limitReached, user.customApiKey]);
 
@@ -175,15 +206,47 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
 
   return (
     <div>
+      <h2 className="text-3xl font-bold text-slate-800 dark:text-slate-200 mb-8">
+          Welcome, {user.name}!
+      </h2>
+      {showEmailBanner && (
+        <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="bg-indigo-100 dark:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800 p-4 rounded-lg shadow-md mb-8 flex flex-col sm:flex-row items-center justify-between gap-4"
+        >
+            <div className="flex-grow">
+                <h4 className="font-bold text-indigo-800 dark:text-indigo-200">Personalize Your Experience</h4>
+                <p className="text-sm text-indigo-700 dark:text-indigo-300 mt-1">Enter your email for a personalized greeting and to unlock all features.</p>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto flex-shrink-0">
+                <input
+                    type="email"
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSaveEmail()}
+                    placeholder="your.email@example.com"
+                    className="w-full sm:w-64 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md py-1.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <button onClick={handleSaveEmail} className="px-4 py-1.5 bg-indigo-600 text-white text-sm font-semibold rounded-md hover:bg-indigo-700 transition-colors">
+                    Save
+                </button>
+                <button onClick={handleDismissBanner} className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-full hover:bg-indigo-200 dark:hover:bg-indigo-800 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+        </motion.div>
+      )}
        {isFreeTier && (
-            <div className="bg-gradient-to-r from-indigo-500 to-emerald-500 text-white p-6 rounded-lg shadow-lg mb-8 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="bg-gradient-to-r from-teal-500 to-emerald-600 text-white p-6 rounded-lg shadow-lg mb-8 flex flex-col md:flex-row items-center justify-between gap-4">
                 <div>
                     <h3 className="font-bold text-xl">Unlock Full Access with Your Own API Key</h3>
-                    <p className="text-indigo-100 mt-1">Bypass weekly limits and get all Pro features by using your personal Google Gemini API key.</p>
+                    <p className="text-teal-100 mt-1">Bypass weekly limits and get all Pro features by using your personal Google Gemini API key.</p>
                 </div>
                 <button 
                     onClick={() => setActiveFeature('developer-settings')}
-                    className="bg-white text-indigo-600 font-bold py-2 px-5 rounded-lg shadow-md hover:bg-indigo-50 transition-transform transform hover:scale-105 flex-shrink-0"
+                    className="bg-white text-emerald-700 font-bold py-2 px-5 rounded-lg shadow-md hover:bg-emerald-50 transition-transform transform hover:scale-105 flex-shrink-0"
                 >
                     Add Your Key
                 </button>
@@ -200,17 +263,17 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
             <GamificationStats />
         </div>
       <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-lg mb-8 transition-shadow hover:shadow-xl">
-        <h3 className="text-xl font-semibold mb-4 text-gray-800 dark:text-slate-200">Upload Sales Call</h3>
-        <div className="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-4">
-            <input type="file" accept="audio/*" onChange={handleFileChange} ref={fileInputRef} className="hidden" />
-            <div className="w-full sm:flex-grow">
+        <h3 className="text-xl font-semibold mb-4 text-gray-800 dark:text-slate-200">Start a New Analysis</h3>
+        <div className="flex flex-col md:flex-row items-center gap-4">
+            <div className="w-full md:flex-1">
+                <input type="file" accept="audio/*" onChange={handleFileChange} ref={fileInputRef} className="hidden" />
                 <Tooltip text="Click to select an audio file (e.g., MP3, WAV, M4A) from your device for analysis.">
                     <div 
                         onClick={() => fileInputRef.current?.click()} 
-                        className="flex items-center justify-between w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm text-sm bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all cursor-pointer"
+                        className="flex items-center justify-between w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm text-sm bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all cursor-pointer"
                     >
                         <span className="text-slate-500 dark:text-slate-400 truncate">
-                            {selectedFile ? selectedFile.name : 'No file chosen'}
+                            {selectedFile ? selectedFile.name : 'recording-2025-11-13T13_30_20.209Z.webm'}
                         </span>
                         <span className="ml-4 px-3 py-1 bg-slate-200 dark:bg-slate-600 rounded-md text-sm font-semibold text-slate-700 dark:text-slate-200 flex-shrink-0">
                             Select File
@@ -218,13 +281,31 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
                     </div>
                 </Tooltip>
             </div>
-            <Tooltip text={analyzeButtonTooltipText()}>
-                <div className="inline-flex w-full sm:w-auto">
-                    <button onClick={analyzeCall} disabled={!selectedFile || isLoading || limitReached} className="w-full sm:w-auto px-6 py-3 bg-indigo-600 text-white font-medium rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
-                        {isLoading ? 'Analyzing...' : (limitReached ? 'Weekly Limit Reached' : 'Analyze Call')}
-                    </button>
-                </div>
-            </Tooltip>
+            <div className="flex items-center gap-2 md:gap-4 w-full md:w-auto">
+                <Tooltip text={analyzeButtonTooltipText()}>
+                    <div className="flex-1 md:flex-none">
+                        <button onClick={analyzeCall} disabled={!selectedFile || isLoading || limitReached} className="w-full px-6 py-3 bg-indigo-600 text-white font-medium rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
+                            {isLoading ? 'Analyzing...' : (limitReached ? 'Limit Reached' : 'Analyze Call')}
+                        </button>
+                    </div>
+                </Tooltip>
+                
+                <span className="flex-shrink-0 mx-2 text-sm font-medium text-slate-400 dark:text-slate-500">OR</span>
+                
+                <Tooltip text="Start a live call using your microphone for real-time transcription and analysis.">
+                    <div className="flex-1 md:flex-none">
+                        <button 
+                            onClick={() => setActiveFeature('live-mic')}
+                            className="w-full px-6 py-3 bg-emerald-600 text-white font-medium rounded-md shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition-all flex items-center justify-center gap-2"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                            </svg>
+                            Start Live Call
+                        </button>
+                    </div>
+                </Tooltip>
+            </div>
         </div>
         {audioUrl && (
           <div className="mt-6"><h4 className="text-lg font-medium text-slate-800 dark:text-slate-200 mb-2">Listen to Call:</h4><audio controls src={audioUrl} className="w-full rounded-md shadow-sm" ref={audioRef} onTimeUpdate={handleAudioTimeUpdate} onEnded={() => setHighlightedSegmentIndex(null)} onLoadedMetadata={calculateSegmentStartTimes}></audio></div>

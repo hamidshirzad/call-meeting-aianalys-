@@ -139,6 +139,7 @@ const App: React.FC = () => {
                     isLoading={isLoadingAnalysis}
                     setIsLoading={setIsLoadingAnalysis}
                     user={user}
+                    setUser={setUser}
                     setActiveFeature={setActiveFeature as any}
                 />;
       case 'live-mic':
@@ -175,6 +176,7 @@ const App: React.FC = () => {
                     isLoading={isLoadingAnalysis}
                     setIsLoading={setIsLoadingAnalysis}
                     user={user}
+                    setUser={setUser}
                     setActiveFeature={setActiveFeature as any}
                 />;
     }

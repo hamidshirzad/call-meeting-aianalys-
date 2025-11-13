@@ -63,22 +63,29 @@ const getAiClient = (userApiKey?: string) => {
 
 
 export const geminiService = {
-  // Transcribes and analyzes an uploaded sales call audio
+  // Transcribes and analyzes an uploaded sales call audio in a single, robust call
   async analyzeSalesCallAudio(audioBase64: string, mimeType: string, userApiKey?: string): Promise<Omit<SalesCallAnalysisReport, 'id' | 'timestamp'>> {
     const ai = getAiClient(userApiKey);
-    const modelFlash = 'gemini-2.5-flash';
     const modelPro = 'gemini-2.5-pro';
 
-    const transcriptionPrompt = `
-      Transcribe the following sales call audio. Identify and label two distinct speakers as 'Speaker A' and 'Speaker B'. Format the output as a JSON array of objects, where each object has 'speaker' (string) and 'text' (string) properties. Ensure the transcription is accurate and covers the entire audio content.
+    const fullAnalysisPrompt = `
+      Analyze the provided sales call audio and generate a comprehensive report in a single JSON object format.
+      The report must include the following four top-level keys: "diarizedTranscript", "sentimentData", "coachingCard", and "summary".
+
+      1.  **diarizedTranscript**: Transcribe the audio, identifying and labeling two distinct speakers as 'Speaker A' (the salesperson) and 'Speaker B' (the customer). The value should be a JSON array of objects, each with "speaker" and "text" string properties.
+      2.  **sentimentData**: Analyze the sentiment of the conversation over time. The value should be a JSON array of objects, where each object has a "segmentIndex" (integer, corresponding to the transcript segment index starting from 0) and a "score" (a number from -1.0 for very negative to 1.0 for very positive).
+      3.  **coachingCard**: Provide coaching feedback for the salesperson. The value should be a JSON object with two keys: "strengths" (an array of 3 strings highlighting what the salesperson did well) and "opportunities" (an array of 3 strings for areas of improvement).
+      4.  **summary**: Write a concise, one-paragraph summary of the entire call.
+
+      Ensure the final output is only the JSON object, without any surrounding text or markdown.
     `;
 
-    const transcriptionResponse: GenerateContentResponse = await ai.models.generateContent({
-      model: modelFlash,
+    const analysisResponse: GenerateContentResponse = await ai.models.generateContent({
+      model: modelPro,
       contents: [
         {
           parts: [
-            { text: transcriptionPrompt },
+            { text: fullAnalysisPrompt },
             {
               inlineData: {
                 mimeType: mimeType,
@@ -91,39 +98,19 @@ export const geminiService = {
       config: {
         responseMimeType: "application/json",
         responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              speaker: { type: Type.STRING },
-              text: { type: Type.STRING },
-            },
-            propertyOrdering: ["speaker", "text"],
-          },
-        },
-      },
-    });
-
-    const diarizedTranscript: DiarizedSegment[] = JSON.parse(transcriptionResponse.text.trim());
-    const fullTranscriptText = diarizedTranscript.map(s => `${s.speaker}: ${s.text}`).join('\n');
-
-    const analysisPrompt = `
-      Given the following sales call transcript, perform two tasks:
-      1. Sentiment Analysis: Break down the transcript into logical segments. For each segment, provide a sentiment score from -1 (very negative) to 1 (very positive).
-      2. Coaching Card: Identify 3 specific things the salesperson (Speaker A) did well and 3 specific missed opportunities.
-      Format the entire output as a single JSON object.
-      Transcript:
-      ${fullTranscriptText}
-    `;
-
-    const analysisResponse: GenerateContentResponse = await ai.models.generateContent({
-      model: modelPro,
-      contents: [{ parts: [{ text: analysisPrompt }] }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
           type: Type.OBJECT,
           properties: {
+            diarizedTranscript: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  speaker: { type: Type.STRING },
+                  text: { type: Type.STRING },
+                },
+                required: ['speaker', 'text'],
+              },
+            },
             sentimentData: {
               type: Type.ARRAY,
               items: {
@@ -132,7 +119,7 @@ export const geminiService = {
                   segmentIndex: { type: Type.INTEGER },
                   score: { type: Type.NUMBER },
                 },
-                propertyOrdering: ["segmentIndex", "score"],
+                required: ['segmentIndex', 'score'],
               },
             },
             coachingCard: {
@@ -147,28 +134,22 @@ export const geminiService = {
                   items: { type: Type.STRING },
                 },
               },
-              propertyOrdering: ["strengths", "opportunities"],
+              required: ['strengths', 'opportunities'],
             },
+            summary: { type: Type.STRING },
           },
-          propertyOrdering: ["sentimentData", "coachingCard"],
+          required: ['diarizedTranscript', 'sentimentData', 'coachingCard', 'summary'],
         },
       },
     });
 
     const analysisResult = JSON.parse(analysisResponse.text.trim());
 
-    const summaryPrompt = `Generate a brief, one-paragraph summary of the sales call, highlighting the main topics discussed and the overall outcome based on the following transcript:\n\n${fullTranscriptText}`;
-    const summaryResponse: GenerateContentResponse = await ai.models.generateContent({
-      model: modelFlash,
-      contents: [{ parts: [{ text: summaryPrompt }] }],
-    });
-    const summary = summaryResponse.text.trim();
-
     return {
-      diarizedTranscript,
+      diarizedTranscript: analysisResult.diarizedTranscript,
       sentimentData: analysisResult.sentimentData,
       coachingCard: analysisResult.coachingCard,
-      summary,
+      summary: analysisResult.summary,
     };
   },
 
