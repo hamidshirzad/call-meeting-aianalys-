@@ -243,6 +243,33 @@ export const geminiService = {
     return { session: await sessionPromise, stopTranscriptionSession };
   },
 
+  // Transcribes an audio file using a standard model
+  async transcribeAudio(audioBase64: string, mimeType: string, userApiKey?: string): Promise<string> {
+    const ai = getAiClient(userApiKey);
+    const model = 'gemini-2.5-flash';
+
+    const transcriptionPrompt = `Transcribe the provided audio accurately.`;
+
+    const response: GenerateContentResponse = await ai.models.generateContent({
+      model: model,
+      contents: [
+        {
+          parts: [
+            { text: transcriptionPrompt },
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: audioBase64,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    return response.text.trim();
+  },
+
   // Generate a video using the Veo model
   async generateVeoVideo(
     prompt: string,

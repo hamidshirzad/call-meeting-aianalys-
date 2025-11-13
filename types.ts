@@ -26,7 +26,7 @@ export interface SalesCallAnalysisReport {
   summary: string;
 }
 
-export type AppFeature = 'sales-coaching' | 'live-mic' | 'video-generator' | 'chat-assistant' | 'my-progress' | 'developer-settings' | 'billing' | 'referrals' | 'team-dashboard';
+export type AppFeature = 'sales-coaching' | 'live-mic' | 'video-generator' | 'chat-assistant' | 'my-progress' | 'developer-settings' | 'billing' | 'referrals' | 'team-dashboard' | 'audio-transcriber';
 
 // Type for chat messages
 export interface ChatMessage {

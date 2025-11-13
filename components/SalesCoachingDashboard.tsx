@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { useStatsigClient } from '@statsig/react-bindings';
 import { SalesCallAnalysisReport, UserDetails, AppFeature } from '../types';
 import { geminiService } from '../services/geminiService';
 import TranscriptionDisplay from './TranscriptionDisplay';
@@ -39,6 +40,7 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const { client } = useStatsigClient();
   
   const isFreeTier = user.plan === 'free' && !user.customApiKey; // Free tier only applies if no custom key
   const weeklyAnalysisLimit = 5;
@@ -115,6 +117,8 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
   const analyzeCall = useCallback(async () => {
     if (!selectedFile || limitReached) return;
 
+    client.logEvent('analyze_call_clicked', 1, { fileName: selectedFile.name, fileType: selectedFile.type });
+
     setIsLoading(true);
     setError(null);
     setAnalysisReport(null);
@@ -145,27 +149,27 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
 
     } catch (err: any) {
         console.error("Analysis failed:", err);
-        let userFriendlyMessage = "An unexpected error occurred during analysis. Please try again.";
-        if (err.message) {
+        let message = "Internal error encountered."; // Default message
+        
+        if (err && typeof err.message === 'string') {
             try {
-                // The error message from the SDK might be a JSON string
-                const errorJson = JSON.parse(err.message);
-                if (errorJson.error && errorJson.error.message) {
-                    userFriendlyMessage = `Analysis failed: ${errorJson.error.message}`;
-                } else {
-                     userFriendlyMessage = `Analysis failed: ${err.message}`;
+                // Attempt to parse a JSON error message from the API
+                const errorPayload = JSON.parse(err.message);
+                if (errorPayload?.error?.message) {
+                    // Use the specific message from the API if available
+                    message = errorPayload.error.message;
                 }
-            } catch (e) {
-                // If it's not JSON, just use the message directly
-                userFriendlyMessage = `Analysis failed: ${err.message}`;
+            } catch (parseError) {
+                // The error message was not a JSON string. We will fall back to the default.
             }
         }
-        setError(userFriendlyMessage);
+        
+        setError(`Analysis failed: ${message}`);
         setAnalysisReport(null);
     } finally {
         setIsLoading(false);
     }
-  }, [selectedFile, setIsLoading, setAnalysisReport, limitReached, user.customApiKey]);
+  }, [selectedFile, setIsLoading, setAnalysisReport, limitReached, user.customApiKey, client]);
 
   useEffect(() => {
     if (audioRef.current && analysisReport && audioRef.current.readyState >= 2) {

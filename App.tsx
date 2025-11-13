@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { AppFeature, SalesCallAnalysisReport, ChatMessage, AppNotification, GamificationState, UserDetails, SubscriptionPlan } from './types';
 import SalesCoachingDashboard from './components/SalesCoachingDashboard';
 import LiveMicTranscriber from './components/LiveMicTranscriber';
+import AudioTranscriber from './components/AudioTranscriber';
 import VideoGenerator from './components/VideoGenerator';
 import ChatAssistant from './components/ChatAssistant';
 import MyProgress from './components/MyProgress';
@@ -149,6 +150,8 @@ const App: React.FC = () => {
                     setIsLoading={setIsLoadingAnalysis}
                     setActiveFeature={setActiveFeature as any}
                 />;
+      case 'audio-transcriber':
+        return <AudioTranscriber user={user} />;
       case 'video-generator':
         return <VideoGenerator user={user} />;
       case 'chat-assistant':
