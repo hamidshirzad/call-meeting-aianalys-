@@ -9,7 +9,7 @@ interface TeamDashboardProps {
 const TeamDashboard: React.FC<TeamDashboardProps> = ({ user, setActiveFeature }) => {
   if (user.plan !== 'enterprise') {
     return (
-      <div className="container mx-auto p-4 sm:p-6 lg:p-8 text-center">
+      <div className="text-center">
         <div className="bg-white dark:bg-slate-800 p-8 rounded-lg shadow-lg max-w-2xl mx-auto">
           <h2 className="text-2xl font-bold mb-4 text-slate-800 dark:text-slate-200">Unlock Your Team's Potential</h2>
           <p className="text-slate-500 dark:text-slate-400 mb-6">
@@ -27,7 +27,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ user, setActiveFeature })
   }
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 lg:p-8">
+    <div>
       <h2 className="text-3xl font-bold mb-6 text-slate-800 dark:text-slate-200">Team Dashboard</h2>
       
       <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-lg">

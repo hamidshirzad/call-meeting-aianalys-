@@ -110,14 +110,14 @@ const BillingPage: React.FC<BillingPageProps> = ({ user, setUser }) => {
     };
 
     return (
-    <div className="container mx-auto p-4 sm:p-6 lg:p-8">
+    <div>
       <h2 className="text-3xl font-bold mb-2 text-slate-800 dark:text-slate-200">Billing & Plans</h2>
       <p className="text-slate-500 dark:text-slate-400 mb-8">Choose the plan that's right for you and your team.</p>
 
       {/* Current Plan Status */}
       <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-lg mb-8">
         <h3 className="text-xl font-semibold mb-2 text-gray-800 dark:text-slate-200">Your Current Plan</h3>
-        <div className="flex items-center space-x-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-4">
             <span className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 capitalize">{user.plan}</span>
             <p className="text-slate-500 dark:text-slate-400">
                 {user.plan !== 'free' ? `Renews on ${new Date(user.subscriptionEndDate).toLocaleDateString()}` : "Upgrade to unlock premium features."}

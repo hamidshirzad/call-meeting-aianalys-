@@ -64,7 +64,7 @@ const getAiClient = (userApiKey?: string) => {
 
 export const geminiService = {
   // Transcribes and analyzes an uploaded sales call audio
-  async analyzeSalesCallAudio(audioBase64: string, userApiKey?: string): Promise<Omit<SalesCallAnalysisReport, 'id' | 'timestamp'>> {
+  async analyzeSalesCallAudio(audioBase64: string, mimeType: string, userApiKey?: string): Promise<Omit<SalesCallAnalysisReport, 'id' | 'timestamp'>> {
     const ai = getAiClient(userApiKey);
     const modelFlash = 'gemini-2.5-flash';
     const modelPro = 'gemini-2.5-pro';
@@ -81,7 +81,7 @@ export const geminiService = {
             { text: transcriptionPrompt },
             {
               inlineData: {
-                mimeType: 'audio/mpeg',
+                mimeType: mimeType,
                 data: audioBase64,
               },
             },

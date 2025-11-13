@@ -9,16 +9,34 @@ interface HeaderProps {
   notifications: AppNotification[];
   setNotifications: (notifications: AppNotification[]) => void;
   user: UserDetails;
+  toggleSidebar: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ isDarkMode, toggleDarkMode, notifications, setNotifications, user }) => {
+const Header: React.FC<HeaderProps> = ({ isDarkMode, toggleDarkMode, notifications, setNotifications, user, toggleSidebar }) => {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const unreadCount = notifications.filter(n => !n.read).length;
 
   return (
-    <header className="sticky top-0 bg-white/70 dark:bg-slate-800/70 backdrop-blur-lg z-20 shadow-sm">
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-end">
-        <div className="flex items-center space-x-4">
+    <header className="sticky top-0 bg-white/70 dark:bg-slate-800/70 backdrop-blur-lg z-10 shadow-sm">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between lg:justify-end">
+        {/* Hamburger Menu - Mobile */}
+        <div className="flex items-center lg:hidden">
+          <button
+            onClick={toggleSidebar}
+            className="p-2 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+            aria-label="Open sidebar"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16m-7 6h7" />
+            </svg>
+          </button>
+           <div className="ml-4 text-lg font-bold">
+            <span className="text-slate-800 dark:text-slate-100">fourdoorai</span>
+            <span className="text-emerald-500 dark:text-emerald-400"> call agent</span>
+           </div>
+        </div>
+
+        <div className="flex items-center space-x-2 sm:space-x-4">
           <button
             onClick={toggleDarkMode}
             className="p-2 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"

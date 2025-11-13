@@ -1,12 +1,16 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { geminiService } from '../services/geminiService';
-import { UserDetails } from '../types';
+import { UserDetails, SalesCallAnalysisReport, AppFeature } from '../types';
+import Tooltip from './Tooltip';
 
 interface LiveMicTranscriberProps {
   user: UserDetails;
+  setAnalysisReport: (report: SalesCallAnalysisReport | null) => void;
+  setIsLoading: (loading: boolean) => void;
+  setActiveFeature: (feature: AppFeature) => void;
 }
 
-const LiveMicTranscriber: React.FC<LiveMicTranscriberProps> = ({ user }) => {
+const LiveMicTranscriber: React.FC<LiveMicTranscriberProps> = ({ user, setAnalysisReport, setIsLoading, setActiveFeature }) => {
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [liveTranscript, setLiveTranscript] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -67,11 +71,54 @@ const LiveMicTranscriber: React.FC<LiveMicTranscriberProps> = ({ user }) => {
       mediaRecorderRef.current = new MediaRecorder(stream);
       audioChunksRef.current = [];
       mediaRecorderRef.current.ondataavailable = (event) => audioChunksRef.current.push(event.data);
+      
       mediaRecorderRef.current.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         setRecordedAudioUrl(URL.createObjectURL(audioBlob));
         audioChunksRef.current = [];
+
+        setStatusMessage('Recording stopped. Analyzing call, this may take a moment...');
+        setIsLoading(true);
+        setError(null);
+
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = async () => {
+            try {
+                if (typeof reader.result !== 'string') {
+                    throw new Error("Failed to read recorded audio file.");
+                }
+                const base64Audio = reader.result.split(',')[1];
+                const reportData = await geminiService.analyzeSalesCallAudio(base64Audio, audioBlob.type, user.customApiKey);
+                
+                const fullReport: SalesCallAnalysisReport = {
+                    ...reportData,
+                    id: `live_${new Date().getTime()}`,
+                    timestamp: new Date().toISOString(),
+                };
+                
+                setAnalysisReport(fullReport);
+                setStatusMessage('Analysis complete! Redirecting to dashboard...');
+                
+                setTimeout(() => {
+                    setActiveFeature('sales-coaching');
+                }, 1500);
+            } catch (err: any) {
+                console.error("Analysis failed:", err);
+                const errorMessage = `Analysis failed: ${err.message || "An unknown error occurred."}`;
+                setError(errorMessage);
+                setStatusMessage('Could not analyze the recording.');
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        reader.onerror = () => {
+            setError("Failed to read the recorded audio file.");
+            setStatusMessage('Could not analyze the recording.');
+            setIsLoading(false);
+        };
       };
+      
       mediaRecorderRef.current.start();
       
       const { session, stopTranscriptionSession } = await geminiService.startLiveTranscription(
@@ -108,7 +155,7 @@ const LiveMicTranscriber: React.FC<LiveMicTranscriberProps> = ({ user }) => {
       setStatusMessage('Failed to start recording.');
       setMicVolume(0);
     }
-  }, [recordedAudioUrl, handleTranscriptionUpdate, handleTurnComplete, handleError, handleClose, handleVolumeUpdate, user.customApiKey]);
+  }, [recordedAudioUrl, handleTranscriptionUpdate, handleTurnComplete, handleError, handleClose, handleVolumeUpdate, user.customApiKey, setIsLoading, setAnalysisReport, setActiveFeature]);
 
   const stopRecording = useCallback(() => {
     if (stopHandlerRef.current) {
@@ -116,8 +163,7 @@ const LiveMicTranscriber: React.FC<LiveMicTranscriberProps> = ({ user }) => {
       stopHandlerRef.current = null;
     }
     setIsRecording(false);
-    setStatusMessage('Recording stopped. Processing audio file...');
-    setMicVolume(0);
+    // The onstop handler will now update the status message
   }, []);
 
   useEffect(() => {
@@ -128,22 +174,24 @@ const LiveMicTranscriber: React.FC<LiveMicTranscriberProps> = ({ user }) => {
   }, [recordedAudioUrl]);
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 lg:p-8">
+    <div>
       <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-lg mb-8">
         <h3 className="text-xl font-semibold mb-4 text-gray-800 dark:text-slate-200">Real-time Audio Transcription & Recording</h3>
         <div className="flex flex-col items-center justify-center space-y-4 mb-4">
-          <button
-            onClick={isRecording ? stopRecording : startRecording}
-            className={`px-8 py-4 rounded-full text-white font-bold text-lg shadow-lg transition-all duration-300 ease-in-out ${isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
-          >
-            {isRecording ? 'Stop Recording' : 'Start Recording'}
-          </button>
+          <Tooltip text={isRecording ? "Stop the current recording. The audio will be saved and automatically sent for analysis." : "Start recording your microphone. Your speech will be transcribed in real-time."}>
+            <button
+              onClick={isRecording ? stopRecording : startRecording}
+              className={`px-8 py-4 rounded-full text-white font-bold text-lg shadow-lg transition-all duration-300 ease-in-out ${isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+            >
+              {isRecording ? 'Stop Recording' : 'Start Recording'}
+            </button>
+          </Tooltip>
         </div>
         <p className={`text-center text-sm ${error ? 'text-red-500' : 'text-slate-500 dark:text-slate-400'}`}>
           {error || statusMessage}
         </p>
 
-        <div className="mt-8 p-6 bg-gray-50 dark:bg-slate-700/50 rounded-lg border border-gray-200 dark:border-slate-700 min-h-[200px] max-h-[400px] overflow-y-auto custom-scrollbar">
+        <div className="mt-8 p-4 sm:p-6 bg-gray-50 dark:bg-slate-700/50 rounded-lg border border-gray-200 dark:border-slate-700 min-h-[200px] max-h-[400px] overflow-y-auto custom-scrollbar">
           <h4 className="text-lg font-medium text-gray-800 dark:text-slate-200 mb-3">Live Transcript:</h4>
           {liveTranscript ? (
             <p className="text-gray-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">{liveTranscript}</p>
@@ -155,13 +203,15 @@ const LiveMicTranscriber: React.FC<LiveMicTranscriberProps> = ({ user }) => {
         {recordedAudioUrl && !isRecording && (
           <div className="mt-6 p-4 bg-emerald-50 dark:bg-emerald-900/50 border border-emerald-200 dark:border-emerald-700 rounded-lg text-center">
             <h4 className="text-lg font-medium text-emerald-800 dark:text-emerald-300 mb-3">Recording Complete</h4>
-            <a
-              href={recordedAudioUrl}
-              download={`recording-${new Date().toISOString()}.webm`}
-              className="inline-flex items-center px-6 py-2 bg-emerald-600 text-white font-medium rounded-md shadow-sm hover:bg-emerald-700"
-            >
-              Download Recording
-            </a>
+            <Tooltip text="Download the complete audio recording as a .webm file.">
+              <a
+                href={recordedAudioUrl}
+                download={`recording-${new Date().toISOString()}.webm`}
+                className="inline-flex items-center px-6 py-2 bg-emerald-600 text-white font-medium rounded-md shadow-sm hover:bg-emerald-700"
+              >
+                Download Recording
+              </a>
+            </Tooltip>
           </div>
         )}
       </div>

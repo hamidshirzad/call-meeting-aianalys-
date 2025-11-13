@@ -1,10 +1,13 @@
 import React from 'react';
 import { AppFeature, SubscriptionPlan } from '../types';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface SidebarProps {
   activeFeature: AppFeature;
   setActiveFeature: (feature: AppFeature) => void;
   userPlan: SubscriptionPlan;
+  isSidebarOpen: boolean;
+  setIsSidebarOpen: (isOpen: boolean) => void;
 }
 
 const NavItem: React.FC<{
@@ -39,7 +42,12 @@ const NavItem: React.FC<{
 );
 
 
-const Sidebar: React.FC<SidebarProps> = ({ activeFeature, setActiveFeature, userPlan }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeFeature, setActiveFeature, userPlan, isSidebarOpen, setIsSidebarOpen }) => {
+  const handleItemClick = (feature: AppFeature) => {
+    setActiveFeature(feature);
+    setIsSidebarOpen(false); // Close sidebar on item click for mobile
+  };
+
   const navItems = [
     { feature: 'sales-coaching' as AppFeature, label: 'Dashboard', icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25A2.25 2.25 0 0113.5 8.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" /></svg> },
     { feature: 'my-progress' as AppFeature, label: 'My Progress', icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" /></svg> },
@@ -55,8 +63,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeFeature, setActiveFeature, user
     { feature: 'developer-settings' as AppFeature, label: 'Developer API', icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" /></svg>, proOnly: true },
   ];
 
-  return (
-    <aside className="w-64 bg-slate-800 text-white flex-shrink-0 p-4 flex flex-col shadow-2xl">
+  const sidebarContent = (
+    <>
       <div className="text-center py-4 mb-4 flex items-center justify-center gap-2">
         <h1 className="text-2xl font-bold">
             <span className="text-slate-100">fourdoorai</span>
@@ -77,7 +85,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeFeature, setActiveFeature, user
               key={item.feature}
               {...item}
               isActive={activeFeature === item.feature}
-              onClick={() => setActiveFeature(item.feature)}
+              onClick={() => handleItemClick(item.feature)}
               disabled={(item.proOnly && userPlan === 'free')}
               isPro={item.proOnly}
             />
@@ -90,7 +98,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeFeature, setActiveFeature, user
               key={item.feature}
               {...item}
               isActive={activeFeature === item.feature}
-              onClick={() => setActiveFeature(item.feature)}
+              onClick={() => handleItemClick(item.feature)}
               disabled={(item.proOnly && userPlan === 'free')}
               isPro={item.proOnly}
             />
@@ -101,7 +109,50 @@ const Sidebar: React.FC<SidebarProps> = ({ activeFeature, setActiveFeature, user
         <p>&copy; {new Date().getFullYear()} fourdoorai call agent</p>
         <p className="mt-1">Powered by Google Gemini</p>
       </div>
-    </aside>
+    </>
+  );
+
+  return (
+    <>
+      {/* Mobile Sidebar */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="fixed inset-0 bg-black/50 z-20 lg:hidden"
+              onClick={() => setIsSidebarOpen(false)}
+            />
+            <motion.aside
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+              className="fixed top-0 left-0 h-full w-64 bg-slate-800 text-white p-4 flex flex-col shadow-2xl z-30"
+            >
+              <button
+                onClick={() => setIsSidebarOpen(false)}
+                className="absolute top-3 right-3 p-2 rounded-full text-slate-400 hover:bg-slate-700 lg:hidden"
+                aria-label="Close sidebar"
+              >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+              </button>
+              {sidebarContent}
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Desktop Sidebar */}
+      <aside className="hidden lg:flex fixed top-0 left-0 h-full w-64 bg-slate-800 text-white p-4 flex-col shadow-2xl">
+        {sidebarContent}
+      </aside>
+    </>
   );
 };
 

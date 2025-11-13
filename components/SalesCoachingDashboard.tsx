@@ -8,6 +8,7 @@ import CallSummary from './CallSummary';
 import TipOfTheDay from './TipOfTheDay';
 import GamificationStats from './GamificationStats';
 import { motion } from 'framer-motion';
+import Tooltip from './Tooltip';
 
 interface SalesCoachingDashboardProps {
     analysisReport: SalesCallAnalysisReport | null;
@@ -104,7 +105,7 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
       reader.onloadend = async () => {
         if (typeof reader.result === 'string') {
           const base64Audio = reader.result.split(',')[1];
-          const reportData = await geminiService.analyzeSalesCallAudio(base64Audio, user.customApiKey);
+          const reportData = await geminiService.analyzeSalesCallAudio(base64Audio, selectedFile.type, user.customApiKey);
           const fullReport: SalesCallAnalysisReport = {
               ...reportData,
               id: `call_${new Date().getTime()}`,
@@ -151,9 +152,29 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
         { label: 'Opportunities Found', value: analysisReport.coachingCard.opportunities.length, change: null },
     ];
   }, [analysisReport]);
+  
+  const getKpiTooltip = (label: string): string => {
+    switch (label) {
+      case 'Avg. Sentiment':
+        return "The average sentiment score across all segments of the call, from -1 (Negative) to 1 (Positive).";
+      case 'Strengths Identified':
+        return "The total number of positive sales techniques and actions identified by the AI.";
+      case 'Opportunities Found':
+        return "The total number of areas for improvement and missed opportunities identified by the AI.";
+      default:
+        return "";
+    }
+  };
+  
+  const analyzeButtonTooltipText = () => {
+    if (limitReached) return "You have reached your weekly analysis limit on the free plan.";
+    if (isLoading) return "Analysis is in progress...";
+    if (!selectedFile) return "Please select an audio file first.";
+    return "Start the AI analysis of the selected call. Shortcut: Ctrl/Cmd + S";
+  };
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 lg:p-8">
+    <div>
        {isFreeTier && (
             <div className="bg-gradient-to-r from-indigo-500 to-emerald-500 text-white p-6 rounded-lg shadow-lg mb-8 flex flex-col md:flex-row items-center justify-between gap-4">
                 <div>
@@ -181,14 +202,29 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
       <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-lg mb-8 transition-shadow hover:shadow-xl">
         <h3 className="text-xl font-semibold mb-4 text-gray-800 dark:text-slate-200">Upload Sales Call</h3>
         <div className="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-4">
-          <input type="file" accept="audio/*" onChange={handleFileChange} ref={fileInputRef} className="hidden" />
-          <button onClick={() => fileInputRef.current?.click()} className="w-full sm:w-auto px-6 py-3 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all">
-            Select Audio File
-          </button>
-          {selectedFile && <span className="text-slate-600 dark:text-slate-400 truncate max-w-xs">{selectedFile.name}</span>}
-          <button onClick={analyzeCall} disabled={!selectedFile || isLoading || limitReached} className="w-full sm:w-auto px-6 py-3 bg-indigo-600 text-white font-medium rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
-            {isLoading ? 'Analyzing...' : (limitReached ? 'Weekly Limit Reached' : 'Analyze Call')}
-          </button>
+            <input type="file" accept="audio/*" onChange={handleFileChange} ref={fileInputRef} className="hidden" />
+            <div className="w-full sm:flex-grow">
+                <Tooltip text="Click to select an audio file (e.g., MP3, WAV, M4A) from your device for analysis.">
+                    <div 
+                        onClick={() => fileInputRef.current?.click()} 
+                        className="flex items-center justify-between w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm text-sm bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all cursor-pointer"
+                    >
+                        <span className="text-slate-500 dark:text-slate-400 truncate">
+                            {selectedFile ? selectedFile.name : 'No file chosen'}
+                        </span>
+                        <span className="ml-4 px-3 py-1 bg-slate-200 dark:bg-slate-600 rounded-md text-sm font-semibold text-slate-700 dark:text-slate-200 flex-shrink-0">
+                            Select File
+                        </span>
+                    </div>
+                </Tooltip>
+            </div>
+            <Tooltip text={analyzeButtonTooltipText()}>
+                <div className="inline-flex w-full sm:w-auto">
+                    <button onClick={analyzeCall} disabled={!selectedFile || isLoading || limitReached} className="w-full sm:w-auto px-6 py-3 bg-indigo-600 text-white font-medium rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
+                        {isLoading ? 'Analyzing...' : (limitReached ? 'Weekly Limit Reached' : 'Analyze Call')}
+                    </button>
+                </div>
+            </Tooltip>
         </div>
         {audioUrl && (
           <div className="mt-6"><h4 className="text-lg font-medium text-slate-800 dark:text-slate-200 mb-2">Listen to Call:</h4><audio controls src={audioUrl} className="w-full rounded-md shadow-sm" ref={audioRef} onTimeUpdate={handleAudioTimeUpdate} onEnded={() => setHighlightedSegmentIndex(null)} onLoadedMetadata={calculateSegmentStartTimes}></audio></div>
@@ -202,8 +238,10 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
                 <div key={i} className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-lg"><div className="h-6 w-1/2 bg-slate-200 dark:bg-slate-700 rounded animate-pulse mb-2"></div><div className="h-10 w-1/4 bg-slate-200 dark:bg-slate-700 rounded animate-pulse"></div></div>
             )) : kpis?.map(kpi => (
                 <motion.div key={kpi.label} initial={{opacity: 0, y: 10}} animate={{opacity: 1, y: 0}} className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-lg transition-shadow hover:shadow-xl">
-                    <h4 className="text-slate-500 dark:text-slate-400 text-sm font-medium">{kpi.label}</h4>
-                    <p className="text-4xl font-bold text-slate-800 dark:text-slate-100 mt-1">{kpi.value}</p>
+                    <Tooltip text={getKpiTooltip(kpi.label)}>
+                        <h4 className="text-slate-500 dark:text-slate-400 text-sm font-medium">{kpi.label}</h4>
+                    </Tooltip>
+                    <p className="text-3xl md:text-4xl font-bold text-slate-800 dark:text-slate-100 mt-1">{kpi.value}</p>
                 </motion.div>
             ))}
         </div>

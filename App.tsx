@@ -23,6 +23,7 @@ const App: React.FC = () => {
   const [notifications, setNotifications] = useLocalStorage<AppNotification[]>('notifications', []);
   
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState<boolean>(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const initialUserDetails: UserDetails = {
     id: 'user_12345',
@@ -80,6 +81,19 @@ const App: React.FC = () => {
     }
   }, [isDarkMode]);
 
+  // Lock body scroll when mobile sidebar is open
+  useEffect(() => {
+    if (isSidebarOpen) {
+      document.body.classList.add('overflow-hidden');
+    } else {
+      document.body.classList.remove('overflow-hidden');
+    }
+    return () => {
+      document.body.classList.remove('overflow-hidden');
+    };
+  }, [isSidebarOpen]);
+
+
   const handleSetAnalysisReport = useCallback((report: SalesCallAnalysisReport | null) => {
     setAnalysisReport(report);
     if (report) {
@@ -128,7 +142,12 @@ const App: React.FC = () => {
                     setActiveFeature={setActiveFeature as any}
                 />;
       case 'live-mic':
-        return <LiveMicTranscriber user={user} />;
+        return <LiveMicTranscriber 
+                    user={user}
+                    setAnalysisReport={handleSetAnalysisReport}
+                    setIsLoading={setIsLoadingAnalysis}
+                    setActiveFeature={setActiveFeature as any}
+                />;
       case 'video-generator':
         return <VideoGenerator user={user} />;
       case 'chat-assistant':
@@ -163,16 +182,17 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex bg-slate-100 dark:bg-slate-900">
-      <Sidebar activeFeature={activeFeature} setActiveFeature={setActiveFeature} userPlan={effectivePlan} />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <Sidebar activeFeature={activeFeature} setActiveFeature={setActiveFeature} userPlan={effectivePlan} isSidebarOpen={isSidebarOpen} setIsSidebarOpen={setIsSidebarOpen} />
+      <div className="flex-1 flex flex-col overflow-hidden lg:ml-64">
         <Header 
           isDarkMode={isDarkMode} 
           toggleDarkMode={toggleDarkMode} 
           notifications={notifications}
           setNotifications={setNotifications}
           user={user}
+          toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         />
-        <main className="flex-grow overflow-y-auto custom-scrollbar">
+        <main className="flex-grow overflow-y-auto custom-scrollbar p-4 sm:p-6 lg:p-8">
           <AnimatePresence mode="wait">
             <motion.div
               key={activeFeature}
@@ -180,6 +200,7 @@ const App: React.FC = () => {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
               transition={{ duration: 0.2 }}
+              className="max-w-7xl mx-auto"
             >
               {renderFeatureComponent(activeFeature)}
             </motion.div>

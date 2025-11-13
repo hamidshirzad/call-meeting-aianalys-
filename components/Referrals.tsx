@@ -27,8 +27,8 @@ const Referrals: React.FC<ReferralsProps> = ({ user, gamification, setGamificati
     };
 
     return (
-        <div className="container mx-auto p-4 sm:p-6 lg:p-8">
-            <div className="bg-white dark:bg-slate-800 p-8 rounded-lg shadow-lg max-w-3xl mx-auto">
+        <div>
+            <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-lg shadow-lg max-w-3xl mx-auto">
                 <h2 className="text-3xl font-bold text-center mb-2 text-slate-800 dark:text-slate-200">Refer a Friend, Get Rewarded</h2>
                 <p className="text-slate-500 dark:text-slate-400 text-center mb-8">
                     Share your unique link with friends. For every friend that signs up, you'll both receive <span className="font-bold text-indigo-500">1,000 bonus API credits!</span>
@@ -36,17 +36,17 @@ const Referrals: React.FC<ReferralsProps> = ({ user, gamification, setGamificati
 
                 <div className="mb-8">
                     <label htmlFor="referral-link" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Your unique referral link</label>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center space-y-2 sm:space-y-0 sm:space-x-2">
                         <input
                             id="referral-link"
                             type="text"
                             readOnly
                             value={referralLink}
-                            className="flex-grow bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg py-2 px-4 font-mono text-sm"
+                            className="flex-grow bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg py-2 px-4 font-mono text-sm w-full"
                         />
                         <button
                             onClick={copyToClipboard}
-                            className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-md shadow-sm text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all w-28"
+                            className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-md shadow-sm text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all sm:w-28"
                         >
                             {copied ? 'Copied!' : 'Copy'}
                         </button>

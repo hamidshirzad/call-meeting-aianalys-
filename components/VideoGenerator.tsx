@@ -87,7 +87,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ user }) => {
   }, [selectedImage, prompt, aspectRatio]);
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 lg:p-8">
+    <div>
       <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-lg mb-8">
         <h3 className="text-xl font-semibold mb-4 text-gray-800 dark:text-slate-200">Generate Video from Image + Prompt</h3>
 
@@ -125,6 +125,36 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ user }) => {
           ></textarea>
         </div>
         
+        <div className="mb-6">
+          <label className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2">
+            Aspect Ratio
+          </label>
+          <div className="flex rounded-lg bg-slate-200 dark:bg-slate-700 p-1">
+            <button
+              onClick={() => setAspectRatio('16:9')}
+              disabled={isLoading}
+              className={`w-1/2 py-2 text-sm font-semibold rounded-md transition-colors ${
+                aspectRatio === '16:9'
+                  ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-300/50 dark:hover:bg-slate-600/50'
+              }`}
+            >
+              16:9 Landscape
+            </button>
+            <button
+              onClick={() => setAspectRatio('9:16')}
+              disabled={isLoading}
+              className={`w-1/2 py-2 text-sm font-semibold rounded-md transition-colors ${
+                aspectRatio === '9:16'
+                  ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-300/50 dark:hover:bg-slate-600/50'
+              }`}
+            >
+              9:16 Portrait
+            </button>
+          </div>
+        </div>
+
         <button
           onClick={generateVideo}
           disabled={!selectedImage || !prompt.trim() || isLoading}
