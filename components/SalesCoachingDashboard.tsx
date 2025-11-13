@@ -145,8 +145,22 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
 
     } catch (err: any) {
         console.error("Analysis failed:", err);
-        const errorMessage = `Analysis failed: ${err.message || "An unknown error occurred."}`;
-        setError(errorMessage);
+        let userFriendlyMessage = "An unexpected error occurred during analysis. Please try again.";
+        if (err.message) {
+            try {
+                // The error message from the SDK might be a JSON string
+                const errorJson = JSON.parse(err.message);
+                if (errorJson.error && errorJson.error.message) {
+                    userFriendlyMessage = `Analysis failed: ${errorJson.error.message}`;
+                } else {
+                     userFriendlyMessage = `Analysis failed: ${err.message}`;
+                }
+            } catch (e) {
+                // If it's not JSON, just use the message directly
+                userFriendlyMessage = `Analysis failed: ${err.message}`;
+            }
+        }
+        setError(userFriendlyMessage);
         setAnalysisReport(null);
     } finally {
         setIsLoading(false);
@@ -203,6 +217,24 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
     if (!selectedFile) return "Please select an audio file first.";
     return "Start the AI analysis of the selected call. Shortcut: Ctrl/Cmd + S";
   };
+  
+  const handleThresholdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    const numValue = parseFloat(value);
+    
+    if (name === 'negative') {
+        // Ensure negative is always less than positive
+        if (numValue < sentimentThresholds.positive) {
+            setSentimentThresholds(prev => ({ ...prev, negative: numValue }));
+        }
+    } else if (name === 'positive') {
+        // Ensure positive is always greater than negative
+        if (numValue > sentimentThresholds.negative) {
+            setSentimentThresholds(prev => ({ ...prev, positive: numValue }));
+        }
+    }
+  };
+
 
   return (
     <div>
@@ -329,6 +361,47 @@ const SalesCoachingDashboard: React.FC<SalesCoachingDashboardProps> = ({ analysi
       }
 
       <CallSummary summary={analysisReport?.summary || null} isLoading={isLoading} />
+      
+      <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-lg mb-8 transition-shadow hover:shadow-xl">
+        <h3 className="text-xl font-semibold mb-4 text-gray-800 dark:text-slate-200">Customize Sentiment View</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+            <div>
+                <label htmlFor="negativeThreshold" className="flex justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
+                    <span>Negative Threshold</span>
+                    <span className="font-bold text-red-500">{sentimentThresholds.negative.toFixed(2)}</span>
+                </label>
+                <input
+                    id="negativeThreshold"
+                    name="negative"
+                    type="range"
+                    min="-1"
+                    max="0"
+                    step="0.05"
+                    value={sentimentThresholds.negative}
+                    onChange={handleThresholdChange}
+                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer dark:bg-slate-700 slider-thumb-red"
+                />
+            </div>
+            <div>
+                <label htmlFor="positiveThreshold" className="flex justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
+                    <span>Positive Threshold</span>
+                    <span className="font-bold text-emerald-500">{sentimentThresholds.positive.toFixed(2)}</span>
+                </label>
+                <input
+                    id="positiveThreshold"
+                    name="positive"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={sentimentThresholds.positive}
+                    onChange={handleThresholdChange}
+                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer dark:bg-slate-700 slider-thumb-green"
+                />
+            </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
         <TranscriptionDisplay transcript={analysisReport?.diarizedTranscript || []} isLoading={isLoading} speakerALabel={speakerALabel} speakerBLabel={speakerBLabel} highlightedSegmentIndex={highlightedSegmentIndex} />
         <SentimentGraph sentimentData={analysisReport?.sentimentData || []} isLoading={isLoading} thresholds={sentimentThresholds} />

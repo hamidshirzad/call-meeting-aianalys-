@@ -66,7 +66,7 @@ export const geminiService = {
   // Transcribes and analyzes an uploaded sales call audio in a single, robust call
   async analyzeSalesCallAudio(audioBase64: string, mimeType: string, userApiKey?: string): Promise<Omit<SalesCallAnalysisReport, 'id' | 'timestamp'>> {
     const ai = getAiClient(userApiKey);
-    const modelPro = 'gemini-2.5-pro';
+    const model = 'gemini-2.5-pro';
 
     const fullAnalysisPrompt = `
       Analyze the provided sales call audio and generate a comprehensive report in a single JSON object format.
@@ -81,7 +81,7 @@ export const geminiService = {
     `;
 
     const analysisResponse: GenerateContentResponse = await ai.models.generateContent({
-      model: modelPro,
+      model: model,
       contents: [
         {
           parts: [
