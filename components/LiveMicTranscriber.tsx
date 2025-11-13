@@ -174,9 +174,9 @@ const LiveMicTranscriber: React.FC<LiveMicTranscriberProps> = ({ user, setAnalys
   }, [recordedAudioUrl]);
 
   return (
-    <div>
-      <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-lg mb-8">
-        <h3 className="text-xl font-semibold mb-4 text-gray-800 dark:text-slate-200">Real-time Audio Transcription & Recording</h3>
+    <div className="max-w-2xl mx-auto">
+      <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-lg shadow-lg">
+        <h3 className="text-xl font-semibold mb-4 text-center text-gray-800 dark:text-slate-200">Real-time Audio Transcription & Recording</h3>
         <div className="flex flex-col items-center justify-center space-y-4 mb-4">
           <Tooltip text={isRecording ? "Stop the current recording. The audio will be saved and automatically sent for analysis." : "Start recording your microphone. Your speech will be transcribed in real-time."}>
             <button
