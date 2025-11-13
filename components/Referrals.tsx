@@ -9,7 +9,7 @@ interface ReferralsProps {
 
 const Referrals: React.FC<ReferralsProps> = ({ user, gamification, setGamification }) => {
     const [copied, setCopied] = useState(false);
-    const referralLink = `https://fourdoorai-call-agent.com/signup?ref=${user.id}`;
+    const referralLink = `https://fourdoor100.com/signup?ref=${user.id}`;
     
     const copyToClipboard = () => {
         navigator.clipboard.writeText(referralLink);

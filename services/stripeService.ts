@@ -42,4 +42,64 @@ export const stripeService = {
     console.log('Upgrade simulation successful.');
     return updatedUser;
   },
+
+  // --- New: helpers that call your backend to create Stripe sessions ---
+  // These methods assume you have backend endpoints implemented,
+  // e.g. POST /api/billing/create-checkout-session and
+  // POST /api/billing/create-portal-session which use Stripe server-side SDK.
+
+  async createCheckoutSession(currentUser: UserDetails, plan: SubscriptionPlan) {
+    // Frontend-safe: no secret keys here. Backend will create the Checkout session.
+    const res = await fetch('/api/billing/create-checkout-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: currentUser.id, plan }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Failed to create checkout session: ${text}`);
+    }
+
+    const data = await res.json();
+    // Expect { url: string } from backend. The frontend should redirect the user to data.url.
+    return data;
+  },
+
+  async createCustomerPortalSession(currentUser: UserDetails) {
+    const res = await fetch('/api/billing/create-portal-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: currentUser.id }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Failed to create portal session: ${text}`);
+    }
+
+    const data = await res.json();
+    // Expect { url: string } from backend. The frontend should redirect the user to data.url.
+    return data;
+  },
+
+  // Helpful developer guidance for local testing with the Stripe CLI.
+  // NOTE: Do not put secret keys in frontend code. Use the Stripe CLI on your dev machine
+  // to forward webhooks to your local backend during development.
+  // Example (macOS, Homebrew):
+  //   brew install stripe/stripe-cli/stripe
+  //   stripe login
+  //   stripe listen --forward-to localhost:3000/api/webhooks/stripe
+  // Then your local backend endpoint /api/webhooks/stripe should verify the signature
+  // using the STRIPE_WEBHOOK_SECRET (provided by `stripe listen`).
+
+  // This helper just returns guidance text for the UI or developer consoles.
+  getLocalStripeGuidance() {
+    return {
+      installCommand: 'brew install stripe/stripe-cli/stripe',
+      loginCommand: 'stripe login',
+      listenCommand: 'stripe listen --forward-to localhost:3000/api/webhooks/stripe',
+      note: 'Run the above on your dev machine. Ensure your local backend verifies webhook signatures using the Stripe SDK with the webhook secret.'
+    };
+  }
 };
