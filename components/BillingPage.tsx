@@ -65,7 +65,15 @@ const PricingCard: React.FC<PricingCardProps> = ({ plan, isCurrentPlan, isLoadin
             </ul>
             {plan === 'pro' && !isCurrentPlan ? (
                 <a
-                    href="https://pay.fourdoor100.com/b/6oEbL17QjcNgbC028t?utm_source=linktree_profile_share&fbclid=PAZnRzaANqTItleHRuA2FlbQIxMQABp8o-_LHgnCxfe8hxr0QSJVx6hr54Uen305VLRLtV5g6W-9ppXOX-00tzwImI_aem_-kASruQg6Zd_RPd6-lUs8g"
+                    <script async
+  src="https://js.stripe.com/v3/buy-button.js">
+</script>
+
+<stripe-buy-button
+  buy-button-id="buy_btn_1STB1EFFlyQJmhYsE1AjKBE4"
+  publishable-key="pk_live_51OfDuBFFlyQJmhYsiSrtcyTp1AIdjTSkBtToM3xaoa95YDnSE1LGmtYpd9IBLv0ESCKnVAuMhXscb2M3g9CGPs8J00Sfg64306"
+>
+</stripe-buy-button>"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="w-full mt-auto py-3 px-6 font-semibold rounded-lg transition-colors duration-200 text-center bg-indigo-600 hover:bg-indigo-700 text-white"
