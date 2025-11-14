@@ -103,3 +103,12 @@ export const stripeService = {
     };
   }
 };
+<script async
+  src="https://js.stripe.com/v3/buy-button.js">
+</script>
+
+<stripe-buy-button
+  buy-button-id="buy_btn_1STB1EFFlyQJmhYsE1AjKBE4"
+  publishable-key="pk_live_51OfDuBFFlyQJmhYsiSrtcyTp1AIdjTSkBtToM3xaoa95YDnSE1LGmtYpd9IBLv0ESCKnVAuMhXscb2M3g9CGPs8J00Sfg64306"
+>
+</stripe-buy-button>
