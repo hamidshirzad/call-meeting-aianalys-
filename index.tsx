@@ -4,8 +4,12 @@ import App from './App';
 import { StatsigProvider } from '@statsig/react-bindings';
 import StatsigAutoCapturePlugin from '@statsig/web-analytics';
 import StatsigSessionReplayPlugin from '@statsig/session-replay';
+import { inject } from '@vercel/analytics';
 
 const statsigKey = "client-blbKUmq95C4narM5nZscSqSAG3d6UVO1oBs9BvkeL8v";
+
+// Initialize Vercel Web Analytics
+inject();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
