@@ -9,16 +9,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "recharts": "^3.4.1",
-    "react-dom": "^19.2.0",
-    "react": "^19.2.0",
-    "@google/genai": "^1.29.0",
-    "framer-motion": "^11.3.11",
-    "flags": "^4.0.2",
     "@flags-sdk/statsig": "^0.2.5",
+    "@google/genai": "^1.29.0",
     "@statsig/react-bindings": "^1.2.0",
+    "@statsig/session-replay": "^1.1.0",
     "@statsig/web-analytics": "^1.1.0",
-    "@statsig/session-replay": "^1.1.0"
+    "@vercel/analytics": "^1.6.1",
+    "flags": "^4.0.2",
+    "framer-motion": "^11.3.11",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-is": "^19.2.0",
+    "recharts": "^3.4.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

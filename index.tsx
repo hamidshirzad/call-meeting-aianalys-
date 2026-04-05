@@ -4,6 +4,7 @@ import App from './App';
 import { StatsigProvider } from '@statsig/react-bindings';
 import StatsigAutoCapturePlugin from '@statsig/web-analytics';
 import StatsigSessionReplayPlugin from '@statsig/session-replay';
+import { inject } from '@vercel/analytics';
 
 const statsigKey = "client-blbKUmq95C4narM5nZscSqSAG3d6UVO1oBs9BvkeL8v";
 
@@ -11,6 +12,9 @@ const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error("Could not find root element to mount to");
 }
+
+// Initialize Vercel Web Analytics
+inject();
 
 const root = ReactDOM.createRoot(rootElement);
 
