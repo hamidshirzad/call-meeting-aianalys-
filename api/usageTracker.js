@@ -2,12 +2,11 @@
 // In a real application, this would interact with a database (e.g., Redis or MongoDB)
 // to fetch and update usage counts atomically.
 
-// Mock database to store usage
+// Mock in-memory usage store
 const usageDatabase = {
-    //'user_id': { count: 0, lastReset: 'date' }
+    //'user_id': { count: 0, lastReset: 'ISO date string' }
 };
 
-// Mock function to get plan limits
 const getPlanLimits = (plan) => {
     switch (plan) {
         case 'pro':
@@ -24,39 +23,58 @@ async function usageTracker(req, res, next) {
     const user = req.user;
 
     if (!user) {
-        // This should not happen if authenticateKey runs first
-        return res.status(500).json({ msg: 'User not found on request' });
+        // Should never reach here if authenticateKey runs first
+        return res.status(500).json({
+            error: {
+                code: '500',
+                message: 'An internal error was encountered.',
+                status: 'INTERNAL',
+                requestId: req.requestId,
+            },
+        });
     }
 
     const { quota } = getPlanLimits(user.plan);
 
     if (quota === 0) {
-        return res.status(403).json({ msg: 'API access is not available on your current plan. Please upgrade to Pro or Enterprise.' });
+        return res.status(403).json({
+            error: {
+                code: '403',
+                message:
+                    'API access is not available on your current plan. ' +
+                    'Please upgrade to Pro or Enterprise.',
+                status: 'PERMISSION_DENIED',
+            },
+        });
     }
 
-    // Initialize user in our mock DB if not present
+    // Initialize user in mock DB if not present
     if (!usageDatabase[user.id]) {
         usageDatabase[user.id] = { count: 0, lastReset: new Date().toISOString() };
     }
-    
+
     const userUsage = usageDatabase[user.id];
 
-    // Simple monthly reset logic (for demonstration)
+    // Simple monthly reset logic
     const resetDate = new Date(userUsage.lastReset);
-    const currentDate = new Date();
-    if (currentDate.getMonth() !== resetDate.getMonth() || currentDate.getFullYear() !== resetDate.getFullYear()) {
+    const now = new Date();
+    if (now.getMonth() !== resetDate.getMonth() || now.getFullYear() !== resetDate.getFullYear()) {
         userUsage.count = 0;
-        userUsage.lastReset = currentDate.toISOString();
+        userUsage.lastReset = now.toISOString();
     }
 
     if (userUsage.count >= quota) {
-        return res.status(429).json({ 
-            msg: `You have exceeded your monthly API quota of ${quota} requests.`,
+        return res.status(429).json({
+            error: {
+                code: '429',
+                message: `You have exceeded your monthly API quota of ${quota} requests.`,
+                status: 'RESOURCE_EXHAUSTED',
+            },
             usage: {
                 count: userUsage.count,
-                quota: quota,
-                resetDate: userUsage.lastReset
-            }
+                quota,
+                resetDate: userUsage.lastReset,
+            },
         });
     }
 

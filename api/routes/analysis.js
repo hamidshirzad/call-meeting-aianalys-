@@ -1,45 +1,94 @@
 const express = require('express');
-const router = express.Router();
+const multer = require('multer');
 const { authenticateKey } = require('../auth/apiKey');
-// const geminiService = require('../../services/geminiService'); // Assume backend service
+const geminiService = require('../services/geminiService');
 
-// @route   POST api/analyze-call
-// @desc    Submit an audio file or transcript for analysis
-// @access  Private (API Key required & usage tracked)
-router.post('/', authenticateKey, async (req, res) => {
-    // Note: The authenticateKey middleware now handles usage tracking as well.
-    const { audioUrl, audioBase64, transcript } = req.body;
-    const userId = req.user.id; // From authenticateKey middleware
+const router = express.Router();
 
-    if (!audioUrl && !audioBase64 && !transcript) {
-        return res.status(400).json({ msg: 'Please provide audioUrl, audioBase64, or transcript.' });
+// Store uploaded files in memory so we can read them as a Buffer
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
+});
+
+const ALLOWED_MIME_TYPES = new Set([
+    'audio/webm',
+    'audio/mp3',
+    'audio/mpeg',
+    'audio/wav',
+    'audio/x-wav',
+    'audio/ogg',
+    'audio/mp4',
+    'audio/aac',
+]);
+
+// @route   POST /api/analyze
+// @desc    Upload an audio file and receive a structured sales call analysis report
+// @access  Private (Bearer API key required)
+router.post('/', authenticateKey, upload.single('file'), async (req, res) => {
+    const requestId = req.requestId;
+    let audioBase64, mimeType;
+
+    // --- Input resolution: multipart/form-data takes precedence over JSON body ---
+    if (req.file) {
+        audioBase64 = req.file.buffer.toString('base64');
+        mimeType = req.file.mimetype;
+    } else if (req.body && req.body.audioBase64) {
+        audioBase64 = req.body.audioBase64;
+        mimeType = req.body.mimeType || 'audio/webm';
+    } else {
+        return res.status(422).json({
+            error: {
+                code: '422',
+                message:
+                    'Invalid input provided. Please ensure you upload a valid audio file ' +
+                    '(e.g., .webm, .mp3, .wav) via multipart/form-data (field name: "file") ' +
+                    'or provide "audioBase64" and "mimeType" in a JSON body.',
+                status: 'INVALID_ARGUMENT',
+            },
+        });
+    }
+
+    // --- MIME type validation ---
+    if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+        return res.status(422).json({
+            error: {
+                code: '422',
+                message:
+                    `Unsupported audio format "${mimeType}". ` +
+                    'Supported formats: audio/webm, audio/mp3, audio/mpeg, audio/wav, audio/ogg, audio/mp4, audio/aac.',
+                status: 'INVALID_ARGUMENT',
+            },
+        });
     }
 
     try {
-        // Placeholder for the actual analysis logic
-        // let analysisReport;
-        // if (audioBase64) {
-        //    analysisReport = await geminiService.analyzeSalesCallAudio(audioBase64);
-        // } else {
-        //    // Handle audioUrl or transcript analysis
-        // }
+        console.log(`[${requestId}] Starting analysis for user "${req.user.id}", mimeType="${mimeType}"`);
 
-        // Store the report in the database, associated with the userId
-        // db.saveReport(userId, analysisReport);
+        const analysisResult = await geminiService.analyzeSalesCallAudio(audioBase64, mimeType);
 
-        const mockReport = {
-            id: `call_${Date.now()}`,
-            summary: "This is a mock analysis summary.",
-            coachingCard: {
-                strengths: ["Good rapport building"],
-                opportunities: ["Did not ask for the sale"]
-            }
+        const report = {
+            id: `call_analysis_${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            summary: analysisResult.summary,
+            diarizedTranscript: analysisResult.diarizedTranscript,
+            sentimentData: analysisResult.sentimentData,
+            coachingCard: analysisResult.coachingCard,
         };
 
-        res.json(mockReport);
+        console.log(`[${requestId}] Analysis complete for user "${req.user.id}", reportId="${report.id}"`);
+
+        res.json(report);
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Server Error');
+        console.error(`[${requestId}] Analysis error for user "${req.user.id}":`, err.message);
+        res.status(500).json({
+            error: {
+                code: '500',
+                message: 'An internal error was encountered during analysis. Please try again later.',
+                status: 'INTERNAL',
+                requestId,
+            },
+        });
     }
 });
 
