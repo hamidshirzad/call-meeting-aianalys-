@@ -34,17 +34,58 @@ app.use((req, res) => {
 });
 
 // Global error handler
+//
+// Handles errors from body-parser (entity.too.large → 413), multer
+// (LIMIT_FILE_SIZE → 413, other MulterError → 422), explicit client errors
+// passed via next(err) with a 4xx status, and unexpected server errors (500).
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
     const requestId = req.requestId || uuidv4();
-    console.error(`[${requestId}] Unhandled error:`, err);
-    res.status(500).json({
-        error: {
-            code: '500',
-            message: 'An internal error was encountered. Please try again later.',
-            status: 'INTERNAL',
-            requestId,
-        },
-    });
+
+    let status;
+    let errorStatus; // API-level status string per spec
+    let message;
+
+    // ── body-parser: JSON payload exceeds limit ──────────────────────────────
+    if (err.type === 'entity.too.large') {
+        status      = 413;
+        errorStatus = 'PAYLOAD_TOO_LARGE';
+        message     = 'Request payload is too large. Audio sent as base64 must be 50 MB or smaller.';
+
+    // ── multer: uploaded file exceeds fileSize limit ─────────────────────────
+    } else if (err.name === 'MulterError' && err.code === 'LIMIT_FILE_SIZE') {
+        status      = 413;
+        errorStatus = 'PAYLOAD_TOO_LARGE';
+        message     = 'Uploaded file exceeds the 50 MB size limit.';
+
+    // ── multer: any other upload constraint (unexpected field, too many files) ─
+    } else if (err.name === 'MulterError') {
+        status      = 422;
+        errorStatus = 'INVALID_ARGUMENT';
+        message     = `File upload error: ${err.message}`;
+
+    // ── explicit client errors forwarded via next(err) with a 4xx status ─────
+    } else if ((err.statusCode || err.status || 0) >= 400 &&
+               (err.statusCode || err.status) < 500) {
+        status      = err.statusCode || err.status;
+        errorStatus = 'CLIENT_ERROR';
+        message     = err.message || 'Bad request.';
+
+    // ── everything else is an unexpected server error ─────────────────────────
+    } else {
+        status      = 500;
+        errorStatus = 'INTERNAL';
+        message     = 'An internal error was encountered. Please try again later.';
+    }
+
+    const code = String(status);
+    console.error(`[${requestId}] [${status}] ${err.name || 'Error'}: ${err.message}`);
+
+    // Only include requestId in the response for server-side errors (5xx)
+    // so that callers can quote it when raising a support ticket.
+    const body = { error: { code, message, status: errorStatus } };
+    if (status >= 500) body.error.requestId = requestId;
+
+    res.status(status).json(body);
 });
 
 const PORT = process.env.PORT || 3001;
