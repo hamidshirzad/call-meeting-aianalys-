@@ -5,11 +5,22 @@ const geminiService = require('../services/geminiService');
 
 const router = express.Router();
 
-// Store uploaded files in memory so we can read them as a Buffer
+// Store uploaded files in memory so we can read them as a Buffer.
+// fileSize is capped at 50 MB; multer will emit LIMIT_FILE_SIZE on overflow.
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
+    limits: { fileSize: 50 * 1024 * 1024, files: 1 },
 });
+
+// Wrap upload.single() so that MulterErrors (LIMIT_FILE_SIZE, unexpected field,
+// etc.) are explicitly forwarded to Express's error-handler chain via next(err)
+// rather than relying on multer's implicit behaviour.
+function handleUpload(req, res, next) {
+    upload.single('file')(req, res, (err) => {
+        if (err) return next(err);
+        next();
+    });
+}
 
 const ALLOWED_MIME_TYPES = new Set([
     'audio/webm',
@@ -25,7 +36,7 @@ const ALLOWED_MIME_TYPES = new Set([
 // @route   POST /api/analyze
 // @desc    Upload an audio file and receive a structured sales call analysis report
 // @access  Private (Bearer API key required)
-router.post('/', authenticateKey, upload.single('file'), async (req, res) => {
+router.post('/', authenticateKey, handleUpload, async (req, res) => {
     const requestId = req.requestId;
     let audioBase64, mimeType;
 

@@ -1,38 +1,87 @@
-# This workflow will trigger Datadog Synthetic tests within your Datadog organisation
-# For more information on running Synthetic tests within your GitHub workflows see: https://docs.datadoghq.com/synthetics/cicd_integrations/github_actions/
-
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-# To get started:
-
-# 1. Add your Datadog API (DD_API_KEY) and Application Key (DD_APP_KEY) as secrets to your GitHub repository. For more information, see: https://docs.datadoghq.com/account_management/api-app-keys/.
-# 2. Start using the action within your workflow
-
 name: Run Datadog Synthetic tests
 
+# Trigger on every push and on PRs targeting main.
+# Feature-branch pushes run the critical-only subset; merges to main run
+# the full suite so that slower tests don't block developer iteration.
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
+      - 'claude/**'
+      - 'feature/**'
+      - 'fix/**'
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
+
+# Cancel in-flight runs for the same ref so a rapid succession of pushes
+# doesn't queue up redundant test runs.
+concurrency:
+  group: datadog-synthetics-${{ github.ref }}
+  cancel-in-progress: true
+
+# Principle of least privilege — this workflow only needs read access.
+permissions:
+  contents: read
 
 jobs:
-  build:
+  synthetic-tests:
+    name: Datadog Synthetic tests (${{ github.ref_name }})
     runs-on: ubuntu-latest
+    # Hard ceiling so a hung Datadog job doesn't block the runner indefinitely.
+    timeout-minutes: 30
+    # Skip the job entirely when the required secrets are absent (e.g. on
+    # forks or contributor PRs that don't have access to org secrets) instead
+    # of failing with a cryptic auth error.
+    if: |
+      secrets.DD_API_KEY != '' && secrets.DD_APP_KEY != ''
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    # Run Synthetic tests within your GitHub workflow.
-    # For additional configuration options visit the action within the marketplace: https://github.com/marketplace/actions/datadog-synthetics-ci
-    - name: Run Datadog Synthetic tests
-      uses: DataDog/synthetics-ci-github-action@87b505388a22005bb8013481e3f73a367b9a53eb # v1.4.0
-      with:
-        api_key: ${{secrets.DD_API_KEY}}
-        app_key: ${{secrets.DD_APP_KEY}}
-        test_search_query: 'tag:e2e-tests' #Modify this tag to suit your tagging strategy
+      # ── Determine which test subset to run ──────────────────────────────────
+      # On main we run the full suite; on all other refs we run only tests
+      # tagged 'tier:critical' to keep PR feedback loops short.
+      - name: Set test search query
+        id: query
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "value=tag:service:call-agent" >> "$GITHUB_OUTPUT"
+            echo "Running full synthetic suite (main branch)"
+          else
+            echo "value=tag:service:call-agent,tag:tier:critical" >> "$GITHUB_OUTPUT"
+            echo "Running critical synthetic tests only (non-main branch)"
+          fi
 
+      # ── Run Datadog Synthetics ───────────────────────────────────────────────
+      # Action pinned to a specific commit SHA for supply-chain security.
+      # Keep in sync with the latest release from:
+      # https://github.com/DataDog/synthetics-ci-github-action/releases
+      - name: Run Datadog Synthetic tests
+        uses: DataDog/synthetics-ci-github-action@87b505388a22005bb8013481e3f73a367b9a53eb # v1.4.0
+        with:
+          api_key: ${{ secrets.DD_API_KEY }}
+          app_key: ${{ secrets.DD_APP_KEY }}
+          test_search_query: ${{ steps.query.outputs.value }}
 
+          # Fail the workflow when Datadog reports a critical error (e.g. the
+          # test runner itself cannot reach the target environment).
+          fail_on_critical_errors: true
+
+          # Do NOT fail when the query matches zero tests — this lets the
+          # workflow pass cleanly before any Synthetic tests have been created
+          # in Datadog for this service.
+          fail_on_missing_tests: false
+
+          # Fail when a test times out waiting for results, rather than
+          # silently marking it as passed.
+          fail_on_timeout: true
+
+          # Pass runtime variables so tests can resolve the correct base URL
+          # for each environment without hardcoding it in Datadog.
+          variables: |
+            ENVIRONMENT=${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+            SERVICE=call-agent
+            GIT_SHA=${{ github.sha }}
+            GIT_REF=${{ github.ref_name }}
