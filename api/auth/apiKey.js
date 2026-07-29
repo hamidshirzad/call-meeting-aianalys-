@@ -15,56 +15,31 @@ async function authenticateKey(req, res, next) {
     const authHeader = req.header('Authorization');
 
     if (!authHeader) {
-        return res.status(401).json({
-            error: {
-                code: '401',
-                message: 'Authorization header is missing. Please provide a Bearer token.',
-                status: 'UNAUTHENTICATED',
-            },
-        });
+        return res.status(401).json({ msg: 'Authorization header is missing' });
     }
 
-    const parts = authHeader.split(' ');
-    if (parts.length !== 2 || parts[0].toLowerCase() !== 'bearer' || !parts[1]) {
-        return res.status(401).json({
-            error: {
-                code: '401',
-                message: 'Malformed Authorization header. Expected format: "Bearer <api_key>".',
-                status: 'UNAUTHENTICATED',
-            },
-        });
-    }
+    const token = authHeader.split(' ')[1]; // Expecting "Bearer [key]"
 
-    const token = parts[1];
+    if (!token) {
+        return res.status(401).json({ msg: 'Token is missing from Authorization header' });
+    }
 
     try {
-        // In a real implementation, verify the key against a secure database
+        // In a real implementation, you'd verify the key against a user database
         const user = usersByApiKey[token];
-
+        
         if (!user) {
-            return res.status(403).json({
-                error: {
-                    code: '403',
-                    message: 'The provided API key is invalid or has expired.',
-                    status: 'PERMISSION_DENIED',
-                },
-            });
+             return res.status(403).json({ msg: 'Invalid API Key' });
         }
 
         req.user = user; // Attach user info to the request object
-
+        
         // Pass to the usage tracker middleware after successful authentication
         usageTracker(req, res, next);
+        
     } catch (err) {
         console.error('API key authentication error:', err);
-        res.status(500).json({
-            error: {
-                code: '500',
-                message: 'An internal error was encountered during authentication.',
-                status: 'INTERNAL',
-                requestId: req.requestId,
-            },
-        });
+        res.status(500).send('Server Error');
     }
 }
 

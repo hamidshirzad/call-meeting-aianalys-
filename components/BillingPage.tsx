@@ -63,7 +63,17 @@ const PricingCard: React.FC<PricingCardProps> = ({ plan, isCurrentPlan, isLoadin
                     </li>
                 ))}
             </ul>
-            <button
+            {plan === 'pro' && !isCurrentPlan ? (
+                <a
+                    href="https://fourdoorai.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full mt-auto py-3 px-6 font-semibold rounded-lg transition-colors duration-200 text-center bg-indigo-600 hover:bg-indigo-700 text-white"
+                >
+                    Upgrade
+                </a>
+            ) : (
+                <button
                     onClick={() => onUpgrade(plan)}
                     disabled={isCurrentPlan || plan === 'enterprise' || isLoading === plan}
                     className={`w-full mt-auto py-3 px-6 font-semibold rounded-lg transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50
@@ -76,6 +86,7 @@ const PricingCard: React.FC<PricingCardProps> = ({ plan, isCurrentPlan, isLoadin
                 >
                     {isLoading === plan ? 'Upgrading...' : isCurrentPlan ? 'Current Plan' : (plan === 'enterprise' ? 'Contact Sales' : 'Upgrade')}
                 </button>
+            )}
         </motion.div>
     );
 };
