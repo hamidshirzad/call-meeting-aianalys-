@@ -14,6 +14,7 @@ import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useLocalStorage } from './hooks/useLocalStorage';
+import { Analytics } from '@vercel/analytics/react';
 
 const App: React.FC = () => {
   const [activeFeature, setActiveFeature] = useLocalStorage<AppFeature>('app-feature', 'my-progress');
@@ -212,6 +213,7 @@ const App: React.FC = () => {
           </AnimatePresence>
         </main>
       </div>
+      <Analytics />
     </div>
   );
 };
