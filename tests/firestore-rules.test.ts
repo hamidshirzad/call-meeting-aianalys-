@@ -8,6 +8,8 @@ describe('initial Firestore rules', () => {
   it('limits user reads to the authenticated owner', () => {
     expect(rules).toContain('request.auth.uid == uid');
     expect(rules).toContain('allow read: if isOwner(uid);');
+    expect(rules).toContain('match /reports/{reportId}');
+    expect(rules).toContain('match /usage/{documentId}');
   });
 
   it('denies browser writes to profiles, reports, usage and Stripe events', () => {
