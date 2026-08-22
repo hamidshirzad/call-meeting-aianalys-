@@ -20,6 +20,47 @@ export type VerifyIdToken = (
   checkRevoked: boolean,
 ) => Promise<FirebaseTokenClaims>;
 
+interface FirebaseVerifierError {
+  code?: unknown;
+}
+
+function readTokenAudience(token: string): string | null {
+  const [, payload] = token.split('.');
+  if (!payload) {
+    return null;
+  }
+
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+      aud?: unknown;
+    };
+    return typeof claims.aud === 'string' && claims.aud.trim().length > 0
+      ? claims.aud.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeVerifierCode(error: unknown): string {
+  const code = (error as FirebaseVerifierError | null)?.code;
+  return typeof code === 'string' && /^(?:app|auth)\/[a-z0-9-]+$/.test(code)
+    ? code
+    : 'unknown';
+}
+
+export function createFirebaseAuthDiagnostic(error: unknown, token: string) {
+  const tokenAudience = readTokenAudience(token);
+  const configuredProjectId = process.env.FIREBASE_PROJECT_ID?.trim() || null;
+
+  return {
+    verifierCode: safeVerifierCode(error),
+    tokenAudiencePresent: tokenAudience !== null,
+    audienceMatchesConfiguredProject:
+      tokenAudience && configuredProjectId ? tokenAudience === configuredProjectId : null,
+  } as const;
+}
+
 export function extractBearerToken(authorization: string | null): string {
   if (!authorization) {
     throw new ApiError(401, 'AUTH_TOKEN_MISSING', 'A Firebase ID token is required.');
@@ -56,6 +97,11 @@ export async function authenticateRequest(
     if (error instanceof ServerConfigurationError) {
       throw error;
     }
+
+    console.error(
+      '[api] Firebase ID token rejected',
+      createFirebaseAuthDiagnostic(error, token),
+    );
     throw new ApiError(401, 'AUTH_TOKEN_INVALID', 'The Firebase ID token is invalid.');
   }
 }
