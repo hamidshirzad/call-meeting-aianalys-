@@ -59,6 +59,11 @@ export function errorResponse(error: unknown, requestId: string): Response {
   }
 
   if (error instanceof ServerConfigurationError) {
+    console.error('[api] server configuration invalid', {
+      requestId,
+      missingNames: error.missingNames,
+    });
+
     return jsonResponse(
       {
         error: {

@@ -68,6 +68,7 @@ describe('GET /api/account', () => {
 
   it('reports missing server credentials as unavailable, not as an invalid user token', async () => {
     const dependencies = createDependencies();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     dependencies.verifyIdToken = vi
       .fn()
       .mockRejectedValue(new ServerConfigurationError(['FIREBASE_PRIVATE_KEY']));
@@ -82,6 +83,10 @@ describe('GET /api/account', () => {
     expect(response.status).toBe(503);
     expect(body).toContain('SERVER_NOT_CONFIGURED');
     expect(body).not.toContain('FIREBASE_PRIVATE_KEY');
+    expect(errorSpy).toHaveBeenCalledWith('[api] server configuration invalid', {
+      requestId: expect.any(String),
+      missingNames: ['FIREBASE_PRIVATE_KEY'],
+    });
   });
 
   it('rejects browser UID impersonation after verifying the caller', async () => {
