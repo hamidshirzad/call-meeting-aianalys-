@@ -22,7 +22,8 @@ describe('authoritative identity and entitlement boundary', () => {
   });
 
   it('does not claim authentication proves a subscription', () => {
-    expect(dashboardSource).toContain('Authentication proves who you are—not whether you paid.');
-    expect(dashboardSource).toContain('No plan assigned');
+    expect(dashboardSource).toContain('Stripe webhooks control entitlement');
+    expect(dashboardSource).toContain('not grant Pro from the redirect');
+    expect(dashboardSource).toContain('Webhook-controlled plan, status, and entitlement');
   });
 });

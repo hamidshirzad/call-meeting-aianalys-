@@ -127,6 +127,35 @@ describe('authoritative user profile repository', () => {
     });
   });
 
+  it('recalculates and expires past-due grace instead of trusting a stored entitlement', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-22T12:00:00.000Z'));
+
+    try {
+      const fake = createFirestore({
+        uid: 'verified-uid',
+        email: principal.email,
+        emailVerified: principal.emailVerified,
+        displayName: principal.displayName,
+        plan: 'pro',
+        subscriptionStatus: 'past_due',
+        pastDueSince: '2026-08-15T11:59:59.999Z',
+        entitled: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      const repository = new UserProfileRepository(fake.firestore);
+
+      await expect(repository.getOrCreate(principal)).resolves.toMatchObject({
+        plan: 'pro',
+        subscriptionStatus: 'past_due',
+        entitled: false,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('returns internal billing identifiers only through the server repository', async () => {
     const fake = createFirestore({
       uid: 'verified-uid',

@@ -322,6 +322,44 @@ h2 {
   background: #f59e0b;
 }
 
+.status-pill.is-active {
+  border-color: rgba(52, 211, 153, 0.4);
+  color: #a7f3d0;
+}
+
+.status-pill.is-active .status-dot {
+  background: #34d399;
+}
+
+.billing-banner {
+  margin-bottom: 20px;
+}
+
+.billing-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.billing-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.billing-warning {
+  margin: 16px 0 0;
+  color: #fcd34d;
+  line-height: 1.5;
+}
+
+.card-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 20px;
+}
+
 .user-email {
   overflow-wrap: anywhere;
   color: #cbd5e1;

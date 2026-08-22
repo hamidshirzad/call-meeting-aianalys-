@@ -1,4 +1,3 @@
-import type Stripe from 'stripe';
 import { ApiError, createRequestId, errorResponse, jsonResponse } from '../_lib/api-errors';
 import { rejectClientBillingAuthority } from '../_lib/billing-request';
 import {
@@ -138,5 +137,3 @@ export async function handleCheckoutRequest(
 }
 
 export default { fetch: handleCheckoutRequest };
-
-export type { Stripe };

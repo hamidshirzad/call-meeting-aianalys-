@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   handleCheckoutRequest,
@@ -47,6 +49,11 @@ function request(init: RequestInit = {}): Request {
 }
 
 describe('POST /api/billing/checkout', () => {
+  it('leaves payment method selection to Stripe', () => {
+    const source = readFileSync(resolve('api/billing/checkout.ts'), 'utf8');
+    expect(source).not.toContain('payment_method_types');
+  });
+
   it('requires a verified Firebase session', async () => {
     const deps = dependencies();
     const response = await handleCheckoutRequest(
