@@ -18,3 +18,16 @@ This branch is the durable implementation branch for recovering the application 
 Authentication, protected dashboard, secure audio analysis, report history, Free/Pro limits, Stripe Checkout, webhook-controlled entitlement, and Customer Portal.
 
 Enterprise, team features, developer API keys, referrals, gamification, video generation, and live streaming remain deferred.
+
+## Milestone status
+
+- [x] Reproducible React/Vite dependency and test foundation
+- [x] Firebase Authentication boundary (email/password, reset, optional Google, logout)
+- [x] Remove shared demo identity and browser-authoritative plan state
+- [x] Remove browser Gemini and mock Stripe services
+- [x] Client-secret source/build guard
+- [x] Default-deny Firestore rules and emulator configuration
+- [ ] Server-side Firebase Admin boundary
+- [ ] Stripe Checkout, Portal, webhooks, and entitlement repository
+- [ ] Protected Gemini analysis and transactional usage
+- [ ] Preview and end-to-end external-service verification

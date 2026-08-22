@@ -1,140 +1,77 @@
-# Sales Coaching Intelligence Platform - API Documentation
+# FourDoorAI Call Coach
 
-This document outlines the specification for the backend API used for analyzing sales calls. While the current implementation of this application communicates directly with the Google Gemini API on the client-side, this documentation serves as the blueprint for a robust, production-grade backend service, as stubbed out in the `/api` directory.
+This branch is recovering the original browser prototype into a server-authoritative paid SaaS.
 
----
+Milestone 1 establishes a reproducible build, Firebase Authentication, a protected application boundary, strict client/server environment separation, and default-deny Firestore rules. AI analysis and billing are deliberately unavailable until their verified server-side milestones are implemented.
 
-### 🔍 Endpoint: `POST /api/analyze`
+## Trust model
 
-*   **Purpose:** To receive a recorded audio file, process it using an AI pipeline, and return a structured analysis report.
-*   **Trigger:** User clicks the "Analyze Call" button after selecting an audio file.
-*   **Authentication:** Requires a valid API Key sent in the `Authorization` header (e.g., `Bearer sk_live_...`).
+- Firebase Authentication is the only browser identity source.
+- Authentication does **not** prove that a user has paid.
+- The browser cannot assign a plan, entitlement, quota, or usage value.
+- Firebase Admin, Gemini, Stripe secret keys, and webhook secrets remain server-only.
+- Firestore rules deny browser writes to profiles, reports, usage, subscriptions, and Stripe event records.
+- Local storage may be used only for harmless UI preferences.
 
----
+## Local setup
 
-### ⚙️ API Usage Flow
+1. Install dependencies with `npm ci` after the lockfile is committed.
+2. Copy `.env.example` to `.env.local`.
+3. Fill in only the six browser-safe `VITE_FIREBASE_*` web-app settings.
+4. Run `npm run dev`.
 
-#### 1. File Upload & Request
+Without Firebase web configuration, the application renders a configuration error and keeps authentication controls disabled. It never falls back to a shared demo user.
 
-The client sends a `POST` request to the `/api/analyze` endpoint. The request body should be a `multipart/form-data` payload containing the audio file.
+## Checks
 
-**Example `multipart/form-data` Request:**
-
-```
-POST /api/analyze
-Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
-Authorization: Bearer <YOUR_API_KEY>
-
-------WebKitFormBoundary7MA4YWxkTrZu0gW
-Content-Disposition: form-data; name="file"; filename="recording-2025-11-13T13_30_20_209Z.webm"
-Content-Type: audio/webm
-
-(binary audio data)
-------WebKitFormBoundary7MA4YWxkTrZu0gW--
-```
-
-Alternatively, a JSON payload with a base64-encoded audio string could be supported for more flexibility:
-
-**Example `application/json` Request:**
-```json
-POST /api/analyze
-Content-Type: application/json
-Authorization: Bearer <YOUR_API_KEY>
-
-{
-  "audioBase64": "UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACAB...",
-  "mimeType": "audio/webm",
-  "userId": "user_123"
-}
+```bash
+npm run guard:client-secrets
+npm run typecheck
+npm test
+npm run build
+npm run check
 ```
 
-#### 2. Processing
+The client-secret guard scans browser-accessible source and rejects known server credential names through dot or bracket access on both `process.env` and `import.meta.env`, forbidden `VITE_` secret aliases, and hardcoded Stripe/webhook/private-key patterns.
 
-The backend server receives the request, validates the input, and passes the audio data to a speech-to-text and AI analysis service (like the Google Gemini API). For longer calls, this could be an asynchronous process.
+## Firebase preparation
 
-#### 3. Successful Response (`200 OK`)
+No external Firebase project is created or modified by this branch.
 
-Upon successful analysis, the server returns a structured JSON object containing the full report, matching the `SalesCallAnalysisReport` type.
+Before a Preview is exposed:
 
-**Example Response Body:**
+1. Create or select a dedicated Firebase project.
+2. Enable Email/Password Authentication.
+3. Optionally enable Google Authentication.
+4. Add the Preview and canonical Vercel hosts to Authorized domains.
+5. Deploy `firestore.rules` before allowing users into the application.
+6. Use separate, least-privileged Firebase Admin credentials only in server environments during a later milestone.
 
-```json
-{
-  "id": "call_analysis_1678886400",
-  "timestamp": "2025-11-13T14:00:00Z",
-  "summary": "The call was a discovery conversation where the salesperson effectively identified the customer's pain points around data integration, but missed an opportunity to schedule a follow-up demo.",
-  "diarizedTranscript": [
-    { "speaker": "Speaker A", "text": "Hi, thanks for taking the time to speak with me today." },
-    { "speaker": "Speaker B", "text": "No problem, glad we could connect." }
-  ],
-  "sentimentData": [
-    { "segmentIndex": 0, "score": 0.5 },
-    { "segmentIndex": 1, "score": 0.6 }
-  ],
-  "coachingCard": {
-    "strengths": [
-      "Excellent rapport-building at the start of the call.",
-      "Asked open-ended questions to uncover needs."
-    ],
-    "opportunities": [
-      "Could have dug deeper into the budget question.",
-      "Missed the final call-to-action to book a demo."
-    ]
-  }
-}
-```
+The repository includes emulator ports in `firebase.json`. Full emulator-backed rules tests will be added with the server-side Firestore repository milestone; Milestone 1 includes deterministic rule-policy checks and a default-deny ruleset.
 
----
+## Environment boundary
 
-### 🚨 Error Handling
+Browser-safe variables:
 
-#### Invalid Input (`422 Unprocessable Entity`)
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
 
-Returned if the request is malformed (e.g., no file attached, unsupported file format).
+Everything else is server-only. In particular, never create `VITE_GEMINI_API_KEY`, `VITE_STRIPE_SECRET_KEY`, `VITE_STRIPE_WEBHOOK_SECRET`, or equivalent aliases.
 
-```json
-{
-  "error": {
-    "code": "422",
-    "message": "Invalid input provided. Please ensure you upload a valid audio file (e.g., .webm, .mp3, .wav).",
-    "status": "INVALID_ARGUMENT"
-  }
-}
-```
+## Deferred work
 
-#### Authentication Error (`401 Unauthorized` / `403 Forbidden`)
+- Firestore profile/subscription repositories
+- Stripe Checkout, Customer Portal, and verified webhooks
+- Transactional usage enforcement
+- Server-side Gemini analysis
+- Saved report history and deletion
+- Storage upload rules
+- Account/data deletion
+- Vercel Preview verification
+- Belgian/EU VAT decision before live billing
 
-Returned if the API key is missing, invalid, or does not have permissions for the requested action.
-
-```json
-{
-  "error": {
-    "code": "403",
-    "message": "The provided API key is invalid or has expired.",
-    "status": "PERMISSION_DENIED"
-  }
-}
-```
-
-#### Server Error (`500 Internal Server Error`)
-
-Returned if an unexpected error occurs on the backend during file parsing or the AI model call. The response should include a request ID for traceability.
-
-```json
-{
-  "error": {
-    "code": "500",
-    "message": "An internal error was encountered during analysis. Please try again later.",
-    "status": "INTERNAL",
-    "requestId": "xyz-123-abc"
-  }
-}
-```
-
----
-
-### 💡 Recommendations for Implementation
-
-*   **Logging:** Log all requests with unique IDs and timestamps for traceability and debugging.
-*   **Validation:** Implement strict validation on the backend for file format, size, and duration to prevent abuse and errors.
-*   **Async Processing:** For audio files longer than a minute, consider an asynchronous pattern where the API immediately returns a `202 Accepted` response with a job ID. The client can then poll a status endpoint or receive a webhook notification when the analysis is complete.
+Do not deploy to production or enable live Stripe credentials from this milestone.
