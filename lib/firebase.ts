@@ -1,5 +1,6 @@
 import { getApp, getApps, initializeApp, type FirebaseOptions } from 'firebase/app';
 import { getAuth, type Auth } from 'firebase/auth';
+import { getStorage, type FirebaseStorage } from 'firebase/storage';
 
 export function normalizeFirebaseEnvironmentValue(value: unknown): string | undefined {
   if (typeof value !== 'string') {
@@ -68,13 +69,20 @@ export const firebaseConfigurationError =
     ? `Firebase Authentication is not configured. Missing browser-safe settings: ${missingConfiguration.join(', ')}.`
     : null;
 
-function createAuth(): Auth | null {
+interface FirebaseServices {
+  auth: Auth;
+  storage: FirebaseStorage;
+}
+
+function createServices(): FirebaseServices | null {
   if (firebaseConfigurationError) {
     return null;
   }
 
   const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-  return getAuth(app);
+  return { auth: getAuth(app), storage: getStorage(app) };
 }
 
-export const firebaseAuth = createAuth();
+const services = createServices();
+export const firebaseAuth = services?.auth ?? null;
+export const firebaseStorage = services?.storage ?? null;

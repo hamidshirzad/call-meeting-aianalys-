@@ -1,0 +1,27 @@
+import { describe, expect, it } from 'vitest';
+import { parseGeminiReport } from '../api/_lib/gemini-analyzer';
+
+describe('Gemini report boundary', () => {
+  it('parses and bounds the structured report', () => {
+    const report = parseGeminiReport(JSON.stringify({
+      diarizedTranscript: [{ speaker: 'Agent', text: 'Hello' }],
+      sentimentData: [{ segmentIndex: 0, score: 9 }],
+      coachingCard: { strengths: ['Clear opening'], opportunities: ['Ask discovery questions'] },
+      summary: 'A short call.',
+    }));
+
+    expect(report).toEqual({
+      diarizedTranscript: [{ speaker: 'Agent', text: 'Hello' }],
+      sentimentData: [{ segmentIndex: 0, score: 1 }],
+      coachingCard: { strengths: ['Clear opening'], opportunities: ['Ask discovery questions'] },
+      summary: 'A short call.',
+    });
+  });
+
+  it('rejects malformed or incomplete model output', () => {
+    expect(() => parseGeminiReport('{not-json')).toThrow();
+    expect(() => parseGeminiReport(JSON.stringify({ summary: 'Missing transcript' }))).toThrow(
+      /incomplete/i,
+    );
+  });
+});

@@ -4,6 +4,12 @@ export interface FirebaseAdminEnvironment {
   projectId: string;
   clientEmail: string;
   privateKey: string;
+  storageBucket: string;
+}
+
+export interface GeminiEnvironment {
+  apiKey: string;
+  model: string;
 }
 
 const firebaseAdminNames = [
@@ -46,5 +52,23 @@ export function loadFirebaseAdminEnvironment(
     throw new ServerConfigurationError(['FIREBASE_PRIVATE_KEY']);
   }
 
-  return Object.freeze({ projectId, clientEmail, privateKey });
+  const storageBucket =
+    environment.FIREBASE_STORAGE_BUCKET?.trim() || `${projectId}.firebasestorage.app`;
+
+  return Object.freeze({ projectId, clientEmail, privateKey, storageBucket });
+}
+
+export function loadGeminiEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+): GeminiEnvironment {
+  if (isMissingOrPlaceholder(environment.GEMINI_API_KEY)) {
+    throw new ServerConfigurationError(['GEMINI_API_KEY']);
+  }
+
+  const model = environment.GEMINI_MODEL?.trim() || 'gemini-3.7-flash';
+  if (!/^gemini-[a-z0-9.-]+$/i.test(model)) {
+    throw new ServerConfigurationError(['GEMINI_MODEL']);
+  }
+
+  return Object.freeze({ apiKey: environment.GEMINI_API_KEY!.trim(), model });
 }

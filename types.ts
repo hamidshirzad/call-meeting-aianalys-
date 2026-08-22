@@ -21,3 +21,17 @@ export interface SalesCallAnalysisReport {
   coachingCard: CoachingCardData;
   summary: string;
 }
+
+export interface SavedAnalysisReport extends SalesCallAnalysisReport {
+  fileName: string;
+  durationSeconds: number | null;
+}
+
+export interface AnalysisUsageSummary {
+  period: string;
+  plan: 'free' | 'pro';
+  completed: number;
+  reserved: number;
+  limit: number;
+  remaining: number;
+}
