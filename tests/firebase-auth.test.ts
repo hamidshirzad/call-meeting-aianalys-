@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApiError } from '../api/_lib/api-errors';
+import { ApiError, ServerConfigurationError } from '../api/_lib/api-errors';
 import {
   authenticateRequest,
   extractBearerToken,
@@ -52,5 +52,18 @@ describe('Firebase ID-token authentication', () => {
       code: 'AUTH_TOKEN_INVALID',
       message: 'The Firebase ID token is invalid.',
     });
+  });
+
+  it('preserves server configuration failures for a 503 response', async () => {
+    const verifyIdToken = vi
+      .fn<VerifyIdToken>()
+      .mockRejectedValue(new ServerConfigurationError(['FIREBASE_PROJECT_ID']));
+    const request = new Request('https://example.test/api/account', {
+      headers: { authorization: 'Bearer token' },
+    });
+
+    await expect(authenticateRequest(request, verifyIdToken)).rejects.toBeInstanceOf(
+      ServerConfigurationError,
+    );
   });
 });

@@ -1,4 +1,4 @@
-import { ApiError } from './api-errors';
+import { ApiError, ServerConfigurationError } from './api-errors';
 import { getFirebaseAdminServices } from './firebase-admin';
 
 export interface VerifiedPrincipal {
@@ -52,7 +52,10 @@ export async function authenticateRequest(
       emailVerified: decoded.email_verified === true,
       displayName: decoded.name ?? null,
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof ServerConfigurationError) {
+      throw error;
+    }
     throw new ApiError(401, 'AUTH_TOKEN_INVALID', 'The Firebase ID token is invalid.');
   }
 }
