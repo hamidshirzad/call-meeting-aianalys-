@@ -1,96 +1,23 @@
-<!DOCTYPE html>
-<html lang="en" class=""> <!-- Base class for dark mode toggling -->
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sales Coaching Intelligence Platform</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        // Enable class-based dark mode in Tailwind
-        tailwind.config = {
-            darkMode: 'class',
-        }
-    </script>
-    <style>
-        /* Custom scrollbar for better aesthetics in light and dark modes */
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-        ::-webkit-scrollbar-track {
-            background: #f1f5f9; /* slate-100 */
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #94a3b8; /* slate-400 */
-            border-radius: 10px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #64748b; /* slate-500 */
-        }
-        .dark ::-webkit-scrollbar-track {
-            background: #1e293b; /* slate-800 */
-        }
-        .dark ::-webkit-scrollbar-thumb {
-            background: #475569; /* slate-600 */
-        }
-        .dark ::-webkit-scrollbar-thumb:hover {
-            background: #64748b; /* slate-500 */
-        }
-        
-        /* Custom slider thumb styles */
-        .slider-thumb-red::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 16px;
-            height: 16px;
-            background: #ef4444; /* red-500 */
-            cursor: pointer;
-            border-radius: 50%;
-        }
-        .slider-thumb-red::-moz-range-thumb {
-            width: 16px;
-            height: 16px;
-            background: #ef4444;
-            cursor: pointer;
-            border-radius: 50%;
-        }
-        .slider-thumb-green::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 16px;
-            height: 16px;
-            background: #22c55e; /* green-500 */
-            cursor: pointer;
-            border-radius: 50%;
-        }
-        .slider-thumb-green::-moz-range-thumb {
-            width: 16px;
-            height: 16px;
-            background: #22c55e;
-            cursor: pointer;
-            border-radius: 50%;
-        }
-    </style>
-<script type="importmap">
-{
-  "imports": {
-    "recharts": "https://aistudiocdn.com/recharts@^3.4.1",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.0",
-    "framer-motion": "https://aistudiocdn.com/framer-motion@^11.3.11",
-    "flags/": "https://aistudiocdn.com/flags@^4.0.2/",
-    "@flags-sdk/statsig": "https://aistudiocdn.com/@flags-sdk/statsig@^0.2.5",
-    "@statsig/react-bindings": "https://aistudiocdn.com/@statsig/react-bindings@^1.2.0",
-    "@statsig/web-analytics": "https://aistudiocdn.com/@statsig/web-analytics@^1.1.0",
-    "@statsig/session-replay": "https://aistudiocdn.com/@statsig/session-replay@^1.1.0"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
-</head>
-<body class="bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-200 antialiased min-h-screen flex flex-col transition-colors duration-300">
-    <div id="root" class="flex-grow flex w-full"></div>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta
+      name="description"
+      content="Secure AI-assisted sales call coaching from FourDoorAI."
+    />
+    <title>FourDoorAI Call Coach</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
-</body>
+  </body>
 </html>
