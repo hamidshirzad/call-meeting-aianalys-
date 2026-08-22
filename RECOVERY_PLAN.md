@@ -28,6 +28,18 @@ Enterprise, team features, developer API keys, referrals, gamification, video ge
 - [x] Client-secret source/build guard
 - [x] Default-deny Firestore rules and emulator configuration
 - [x] Server-side Firebase Admin boundary and UID-scoped account profile repository
-- [ ] Stripe Checkout, Portal, webhooks, and entitlement repository
+- [x] Stripe test-mode Checkout, Portal, signed webhooks, and entitlement repository
 - [ ] Protected Gemini analysis and transactional usage
 - [ ] Preview and end-to-end external-service verification
+
+## Milestone 3 checkpoint
+
+Stripe billing is implemented in test mode behind verified Firebase identity. The server owns the
+Price, Customer mapping, Checkout and Portal sessions, webhook signature verification, event
+deduplication, event ordering, subscription state, and entitlement decisions. A Checkout redirect
+never grants Pro access; only a verified webhook can update the authoritative Firestore profile.
+
+The product owner reports that the Belgian/EU tax treatment is confirmed. Automatic tax remains
+intentionally disabled until that treatment is documented and the matching Stripe Tax head-office
+details, active registrations, and product tax code are verified. No live Stripe key is accepted by
+this milestone.

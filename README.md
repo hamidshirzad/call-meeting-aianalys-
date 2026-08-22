@@ -2,29 +2,179 @@
 
 This branch is recovering the original browser prototype into a server-authoritative paid SaaS.
 
-Milestone 2 adds the server identity foundation: Firebase Admin ID-token verification, a UID-scoped Firestore account repository, request-correlated API errors, and emulator-backed security-rule tests. AI analysis and billing remain deliberately unavailable until their own verified server-side milestones are implemented.
+Milestone 3 adds Stripe test-mode subscription billing: authenticated Checkout and Customer Portal
+routes, a signed raw-body webhook, durable event deduplication and ordering, and a dashboard that
+displays only the server-derived plan. AI analysis remains disabled until usage enforcement and
+Gemini are connected server-side in the next milestone.
 
-## Trust model
+## Current trust model
 
 - Firebase Authentication is the only browser identity source.
 - Authentication does **not** prove that a user has paid.
-- The browser cannot assign a plan, entitlement, quota, or usage value.
-- Firebase Admin, Gemini, Stripe secret keys, and webhook secrets remain server-only.
-- Firestore rules deny browser writes to profiles, reports, usage, subscriptions, and Stripe event records.
-- Local storage may be used only for harmless UI preferences.
-- `GET /api/account` derives its UID exclusively from a verified Firebase ID token.
-- New server-created profiles always start on `free`, with `subscriptionStatus: none` and `entitled: false`.
+- Firebase Admin verifies the ID token for every account, Checkout, and Portal request.
+- The browser cannot choose a UID, Stripe Customer, Subscription, Price, plan, or entitlement.
+- The Pro Price is allowlisted through a server-only environment variable.
+- Checkout success and cancel URLs are display signals only; neither can change access.
+- Stripe webhook signatures are verified from the exact raw request body before processing.
+- Firestore stores processed Stripe event IDs so webhook retries are idempotent.
+- Older subscription events cannot overwrite newer subscription state.
+- Firestore rules deny browser writes to profiles, reports, usage, subscriptions, and Stripe events.
+- Firebase Admin, Gemini, Stripe keys, and webhook secrets remain server-only.
+- New server-created profiles always start on `free`, with `subscriptionStatus: none` and
+  `entitled: false`.
+
+## Implemented launch path
+
+1. A user registers or signs in with Firebase Authentication.
+2. `GET /api/account` verifies the Firebase ID token and returns the authoritative profile.
+3. A Free user requests `POST /api/billing/checkout` with no client-selected billing values.
+4. The server creates or reuses the UID-linked Stripe Customer and opens hosted Checkout using the
+   allowlisted monthly Pro Price.
+5. Stripe sends a signed event to `POST /api/stripe/webhook`.
+6. The webhook transaction deduplicates the event, rejects stale state, and updates Firestore.
+7. The browser refreshes the account profile and displays the webhook-derived plan.
+8. A user with a Stripe Customer can open `POST /api/billing/portal` to manage billing.
 
 ## Local setup
 
-1. Install dependencies with `npm ci` after the lockfile is committed.
+1. Install the committed dependency graph with `npm ci`.
 2. Copy `.env.example` to `.env.local`.
-3. Fill in only the six browser-safe `VITE_FIREBASE_*` web-app settings.
-4. Run `npm run dev`.
+3. Fill in the six browser-safe `VITE_FIREBASE_*` web-app settings.
+4. Supply separate test server credentials in the local function runtime.
+5. Run `npm run dev`.
 
-Without Firebase web configuration, the application renders a configuration error and keeps authentication controls disabled. It never falls back to a shared demo user.
+Without Firebase web configuration, the application renders a configuration error and never falls
+back to a shared demo user. Without the server-only Firebase or Stripe settings, protected API
+routes return a bounded configuration error rather than leaking missing names or secret values.
 
-## Checks
+## Environment boundary
+
+Browser-safe Firebase identifiers:
+
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
+
+Server-only Firebase Admin values:
+
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY` (escaped `\\n` newlines are normalized server-side)
+
+Server-only Stripe test values:
+
+- `STRIPE_SECRET_KEY`: a test secret key or least-privileged test restricted key
+- `STRIPE_WEBHOOK_SECRET`: the signing secret for this environment's webhook endpoint
+- `STRIPE_PRO_MONTHLY_PRICE_ID`: the one allowlisted recurring Pro Price
+- `APP_URL`: the exact HTTPS origin for this environment, with no path
+
+Server-only future AI value:
+
+- `GEMINI_API_KEY`
+
+Never add `VITE_` to a Gemini key, Stripe secret, webhook secret, Firebase Admin credential, or any
+equivalent alias. Preview and Production must use separate scoped values. `APP_URL` must point to the
+same environment that initiated Checkout; configure a stable Preview branch URL if ephemeral Vercel
+deployment hosts would otherwise change on every build.
+
+## Billing endpoints
+
+All browser billing endpoints require:
+
+```http
+Authorization: Bearer <firebase-id-token>
+```
+
+### `POST /api/billing/checkout`
+
+- Accepts no browser-selected Price, Customer, Subscription, UID, or plan.
+- Creates a Stripe Customer with an idempotency key derived from the verified UID when needed.
+- Transactionally reuses the winning Customer if concurrent requests race.
+- Uses hosted subscription Checkout and Stripe's dynamic payment methods.
+- Uses only `STRIPE_PRO_MONTHLY_PRICE_ID` for the Pro line item.
+- Blocks a second Checkout while an existing subscription needs Portal management.
+- Returns a short-lived HTTPS Checkout URL.
+
+### `POST /api/billing/portal`
+
+- Opens a short-lived Stripe Customer Portal session for the verified user's mapped Customer.
+- Never accepts a Customer ID from the browser.
+- Returns to the environment-specific `APP_URL`.
+
+### `POST /api/stripe/webhook`
+
+- Requires `Stripe-Signature` and verifies it with `STRIPE_WEBHOOK_SECRET`.
+- Reads the exact raw body before parsing or processing.
+- Rejects live-mode events in this milestone.
+- Returns `200` for unsupported event types so Stripe does not retry irrelevant events.
+- Stores event outcomes in `stripeEvents/{eventId}` and updates the user in one transaction.
+
+Subscribe the test endpoint to:
+
+- `checkout.session.completed`
+- `customer.subscription.created`
+- `customer.subscription.updated`
+- `customer.subscription.deleted`
+- `customer.subscription.paused`
+- `customer.subscription.resumed`
+- `invoice.paid`
+- `invoice.payment_failed`
+
+`checkout.session.completed` associates known Stripe identifiers but does not itself grant access.
+Subscription state is reconciled from the current Stripe Subscription before Firestore is updated.
+
+## Entitlement policy
+
+| Stripe-derived status | Plan | Access |
+|---|---:|---|
+| `active` or `trialing` | Pro | Granted |
+| `past_due` for up to seven days | Pro | Temporarily granted with a warning |
+| `past_due` after seven days | Pro | Denied |
+| `unpaid`, `canceled`, `incomplete`, `incomplete_expired`, or `paused` | Free | Denied |
+| `none` or any unknown value | Free | Denied |
+
+The account read recalculates grace access from `pastDueSince`; it does not trust a stale stored
+boolean. Unknown statuses and Prices fail closed.
+
+## Stripe test-mode preparation
+
+No Stripe account was modified by this branch. When external Preview setup is approved:
+
+1. In Stripe test mode, create or select the FourDoorAI Pro product.
+2. Create one recurring monthly EUR Price for €49 and put only its ID in
+   `STRIPE_PRO_MONTHLY_PRICE_ID`.
+3. Configure the test Customer Portal for subscription management and cancellation.
+4. Create a test webhook for `https://<preview-host>/api/stripe/webhook` with the event list above.
+5. Store its test signing secret only as `STRIPE_WEBHOOK_SECRET` in the matching Preview scope.
+6. Store a test secret or minimum-permission restricted key only as `STRIPE_SECRET_KEY`.
+7. Set `APP_URL` to the exact Preview origin and redeploy that Preview.
+8. Complete a test Checkout, confirm the webhook succeeds, refresh billing status, open Portal,
+   cancel the test subscription, and confirm the UI returns to Free from the webhook update.
+
+Do not paste Stripe secrets into chat, commit them, reuse Preview values in Production, or use a
+live-mode key. The server rejects `sk_live_` and live webhook events in this milestone.
+
+## Firebase preparation
+
+No Firebase project was created or modified by this branch.
+
+Before exposing a Preview:
+
+1. Use the intended dedicated Firebase project.
+2. Enable Email/Password Authentication and optionally Google Authentication.
+3. Add the stable Preview and canonical Vercel hosts to Firebase Authorized domains.
+4. Create Firestore and deploy `firestore.rules` before allowing users into the application.
+5. Configure a dedicated, least-privileged Firebase Admin service account only in the server
+   environment.
+
+The repository includes Firestore emulator ports in `firebase.json`. `npm run test:rules` proves
+owner-only reads and browser-write denial for profiles, reports, usage, and Stripe event records
+when the emulator binary is available.
+
+## Verification
 
 ```bash
 npm run guard:client-secrets
@@ -35,71 +185,39 @@ npm run check
 npm run test:rules
 ```
 
-The client-secret guard scans browser-accessible source and rejects known server credential names through dot or bracket access on both `process.env` and `import.meta.env`, forbidden `VITE_` secret aliases, and hardcoded Stripe/webhook/private-key patterns.
+The client-secret guard scans browser-accessible source and rejects known server credential names
+through dot or bracket access on `process.env` and `import.meta.env`, forbidden `VITE_` secret
+aliases, and hardcoded Stripe/webhook/private-key patterns.
 
-## Firebase preparation
+Milestone 3's unit suite covers Firebase authorization, browser impersonation attempts, the server
+Price allowlist, Customer reuse, Checkout and Portal boundaries, raw-body signature verification,
+event deduplication, stale-event rejection, cancellation and payment-failure state, seven-day
+`past_due` grace, fail-closed statuses, and the webhook-controlled dashboard.
 
-No external Firebase project is created or modified by this branch.
+## Tax and live-mode blocker
 
-Before a Preview is exposed:
+Stripe Tax is intentionally **not enabled**. No automatic tax will be calculated or collected by
+this code. The product owner reports that the Belgian/EU tax treatment is confirmed. Before live
+billing, record that treatment in the launch checklist, verify the Stripe Tax head-office details,
+active registrations, and selected SaaS product tax code, then test the resulting calculation.
+Adding a registration in Stripe records an existing registration; it does not register the business
+with a tax authority.
 
-1. Create or select a dedicated Firebase project.
-2. Enable Email/Password Authentication.
-3. Optionally enable Google Authentication.
-4. Add the Preview and canonical Vercel hosts to Authorized domains.
-5. Deploy `firestore.rules` before allowing users into the application.
-6. Use separate, least-privileged Firebase Admin credentials only in server environments during a later milestone.
-
-The repository includes emulator ports in `firebase.json`. `npm run test:rules` starts the Firestore emulator and proves owner-only reads plus browser-write denial for profiles, reports, usage, and Stripe event records.
-
-## Server account endpoint
-
-`GET /api/account` requires a Firebase ID token:
-
-```http
-Authorization: Bearer <firebase-id-token>
-```
-
-The function verifies revocation through Firebase Admin, ignores all browser identity state, rejects `uid` and `userId` query parameters, and creates or reads only `users/{verifiedUid}`. It may synchronize verified email/name fields, but it never overwrites plan, entitlement, or Stripe identifiers while doing so.
-
-The endpoint returns bounded errors:
-
-- `401` for missing or invalid Firebase tokens
-- `400` for client UID impersonation attempts
-- `405` for unsupported methods
-- `503` when server-only Firebase Admin configuration is absent
-- `500` for unexpected failures, with a request ID and no internal error details
-
-Required server-only Firebase Admin variables:
-
-- `FIREBASE_PROJECT_ID`
-- `FIREBASE_CLIENT_EMAIL`
-- `FIREBASE_PRIVATE_KEY` (escaped `\\n` newlines are normalized server-side)
-
-These credentials are not needed by the Vite browser build and must never receive a `VITE_` prefix.
-
-## Environment boundary
-
-Browser-safe variables:
-
-- `VITE_FIREBASE_API_KEY`
-- `VITE_FIREBASE_AUTH_DOMAIN`
-- `VITE_FIREBASE_PROJECT_ID`
-- `VITE_FIREBASE_STORAGE_BUCKET`
-- `VITE_FIREBASE_MESSAGING_SENDER_ID`
-- `VITE_FIREBASE_APP_ID`
-
-Everything else is server-only. In particular, never create `VITE_GEMINI_API_KEY`, `VITE_STRIPE_SECRET_KEY`, `VITE_STRIPE_WEBHOOK_SECRET`, or equivalent aliases.
+Do not turn on `automatic_tax` merely because a Stripe account exists. It can silently collect zero
+tax without active registrations, and it must not be enabled until the legal and Stripe setup is
+confirmed.
 
 ## Deferred work
 
-- Stripe Checkout, Customer Portal, and verified webhooks
-- Transactional usage enforcement
+- Transactional Free/Pro usage reservations and limits
 - Server-side Gemini analysis
+- Secure audio upload and temporary-object deletion
 - Saved report history and deletion
 - Storage upload rules
-- Account/data deletion
-- Vercel Preview verification
-- Belgian/EU VAT decision before live billing
+- Full re-authenticated account/data deletion
+- Vercel Preview end-to-end verification
+- Documented Belgian/EU VAT treatment and validated Stripe Tax setup before live billing
+- Production credentials, production deployment, and domain changes
 
-Do not deploy to production or enable live Stripe credentials from this milestone.
+Enterprise, teams, developer API keys, referrals, gamification, video generation, and Gemini Live
+streaming remain outside the launch recovery scope.
