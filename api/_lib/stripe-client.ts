@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { loadStripeEnvironment } from './stripe-env';
+import { loadStripeEnvironment } from './stripe-env.js';
 
 let cachedStripeClient: Stripe | null = null;
 

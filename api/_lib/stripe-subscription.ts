@@ -1,6 +1,6 @@
 import type Stripe from 'stripe';
-import type { StripeEnvironment } from './stripe-env';
-import type { SubscriptionPlan, SubscriptionStatus } from './user-profile-repository';
+import type { StripeEnvironment } from './stripe-env.js';
+import type { SubscriptionPlan, SubscriptionStatus } from './user-profile-repository.js';
 
 export interface StripeSubscriptionSnapshot {
   uid: string | null;

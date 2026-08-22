@@ -1,11 +1,11 @@
-import { ApiError, createRequestId, errorResponse, jsonResponse } from './_lib/api-errors';
+import { ApiError, createRequestId, errorResponse, jsonResponse } from './_lib/api-errors.js';
 import {
   authenticateRequest,
   type VerifiedPrincipal,
   type VerifyIdToken,
-} from './_lib/firebase-auth';
-import { getFirebaseAdminServices } from './_lib/firebase-admin';
-import { UserProfileRepository, type UserProfile } from './_lib/user-profile-repository';
+} from './_lib/firebase-auth.js';
+import { getFirebaseAdminServices } from './_lib/firebase-admin.js';
+import { UserProfileRepository, type UserProfile } from './_lib/user-profile-repository.js';
 
 export interface AccountHandlerDependencies {
   verifyIdToken: VerifyIdToken;

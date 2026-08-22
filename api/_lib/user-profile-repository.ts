@@ -4,8 +4,8 @@ import {
   type Firestore,
   type Timestamp,
 } from 'firebase-admin/firestore';
-import type { VerifiedPrincipal } from './firebase-auth';
-import { isSubscriptionEntitled } from './entitlement-policy';
+import type { VerifiedPrincipal } from './firebase-auth.js';
+import { isSubscriptionEntitled } from './entitlement-policy.js';
 
 export type SubscriptionPlan = 'free' | 'pro';
 export type SubscriptionStatus =

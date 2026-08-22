@@ -1,4 +1,4 @@
-import { ApiError } from './api-errors';
+import { ApiError } from './api-errors.js';
 
 const forbiddenQueryParameters = ['uid', 'userId', 'priceId', 'customerId', 'subscriptionId'];
 

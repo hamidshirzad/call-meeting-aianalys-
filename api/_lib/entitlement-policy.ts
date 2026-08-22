@@ -1,4 +1,4 @@
-import type { SubscriptionStatus } from './user-profile-repository';
+import type { SubscriptionStatus } from './user-profile-repository.js';
 
 export const PAST_DUE_GRACE_DAYS = 7;
 const pastDueGraceMilliseconds = PAST_DUE_GRACE_DAYS * 24 * 60 * 60 * 1000;

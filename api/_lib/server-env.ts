@@ -1,4 +1,4 @@
-import { ServerConfigurationError } from './api-errors';
+import { ServerConfigurationError } from './api-errors.js';
 
 export interface FirebaseAdminEnvironment {
   projectId: string;

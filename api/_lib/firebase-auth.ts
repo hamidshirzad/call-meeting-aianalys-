@@ -1,5 +1,5 @@
-import { ApiError, ServerConfigurationError } from './api-errors';
-import { getFirebaseAdminServices } from './firebase-admin';
+import { ApiError, ServerConfigurationError } from './api-errors.js';
+import { getFirebaseAdminServices } from './firebase-admin.js';
 
 export interface VerifiedPrincipal {
   uid: string;

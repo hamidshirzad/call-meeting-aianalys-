@@ -4,9 +4,9 @@ import {
   type Firestore,
   type UpdateData,
 } from 'firebase-admin/firestore';
-import { isSubscriptionEntitled } from './entitlement-policy';
-import type { StripeSubscriptionSnapshot } from './stripe-subscription';
-import type { SubscriptionStatus } from './user-profile-repository';
+import { isSubscriptionEntitled } from './entitlement-policy.js';
+import type { StripeSubscriptionSnapshot } from './stripe-subscription.js';
+import type { SubscriptionStatus } from './user-profile-repository.js';
 
 export interface StripeEventEnvelope {
   id: string;

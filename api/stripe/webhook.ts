@@ -1,19 +1,19 @@
 import type Stripe from 'stripe';
-import { ApiError, createRequestId, errorResponse, jsonResponse } from '../_lib/api-errors';
-import { getFirebaseAdminServices } from '../_lib/firebase-admin';
-import { getStripeClient } from '../_lib/stripe-client';
-import { loadStripeEnvironment, type StripeEnvironment } from '../_lib/stripe-env';
+import { ApiError, createRequestId, errorResponse, jsonResponse } from '../_lib/api-errors.js';
+import { getFirebaseAdminServices } from '../_lib/firebase-admin.js';
+import { getStripeClient } from '../_lib/stripe-client.js';
+import { loadStripeEnvironment, type StripeEnvironment } from '../_lib/stripe-env.js';
 import {
   stripeResourceId,
   subscriptionIdFromInvoice,
   toSubscriptionSnapshot,
-} from '../_lib/stripe-subscription';
+} from '../_lib/stripe-subscription.js';
 import {
   StripeWebhookRepository,
   type CheckoutAssociation,
   type StripeEventEnvelope,
   type WebhookMutationResult,
-} from '../_lib/stripe-webhook-repository';
+} from '../_lib/stripe-webhook-repository.js';
 
 const subscriptionEventTypes = new Set([
   'customer.subscription.created',

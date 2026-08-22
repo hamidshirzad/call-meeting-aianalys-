@@ -1,17 +1,17 @@
-import { ApiError, createRequestId, errorResponse, jsonResponse } from '../_lib/api-errors';
-import { rejectClientBillingAuthority } from '../_lib/billing-request';
+import { ApiError, createRequestId, errorResponse, jsonResponse } from '../_lib/api-errors.js';
+import { rejectClientBillingAuthority } from '../_lib/billing-request.js';
 import {
   authenticateRequest,
   type VerifiedPrincipal,
   type VerifyIdToken,
-} from '../_lib/firebase-auth';
-import { getFirebaseAdminServices } from '../_lib/firebase-admin';
-import { getStripeClient } from '../_lib/stripe-client';
-import { loadStripeEnvironment, type StripeEnvironment } from '../_lib/stripe-env';
+} from '../_lib/firebase-auth.js';
+import { getFirebaseAdminServices } from '../_lib/firebase-admin.js';
+import { getStripeClient } from '../_lib/stripe-client.js';
+import { loadStripeEnvironment, type StripeEnvironment } from '../_lib/stripe-env.js';
 import {
   UserProfileRepository,
   type BillingIdentity,
-} from '../_lib/user-profile-repository';
+} from '../_lib/user-profile-repository.js';
 
 export interface PortalHandlerDependencies {
   verifyIdToken: VerifyIdToken;
