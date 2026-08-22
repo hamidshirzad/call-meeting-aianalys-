@@ -1,6 +1,11 @@
 import type { User } from 'firebase/auth';
 import { ref, uploadBytesResumable } from 'firebase/storage';
 import { firebaseStorage } from './firebase';
+import {
+  describeStorageUploadFailure,
+  stalledStorageUpload,
+  STORAGE_UPLOAD_STALL_MS,
+} from './storage-upload-error';
 import type { AnalysisUsageSummary, SavedAnalysisReport } from '../types';
 
 const MAX_AUDIO_BYTES = 50 * 1024 * 1024;
@@ -111,16 +116,43 @@ async function uploadAudio(
   const path = createUploadPath(user.uid, file.name);
   const task = uploadBytesResumable(ref(firebaseStorage, path), file, { contentType });
   await new Promise<void>((resolve, reject) => {
+    let lastTransferred = 0;
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearStallTimer = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = null;
+    };
+    const resetStallTimer = () => {
+      clearStallTimer();
+      stallTimer = setTimeout(() => {
+        reject(new AnalysisApiError(stalledStorageUpload.message, stalledStorageUpload.code));
+        task.cancel();
+      }, STORAGE_UPLOAD_STALL_MS);
+    };
+
+    resetStallTimer();
     task.on(
       'state_changed',
       (snapshot) => {
+        if (snapshot.bytesTransferred > lastTransferred) {
+          lastTransferred = snapshot.bytesTransferred;
+          resetStallTimer();
+        }
         const percentage = snapshot.totalBytes > 0
           ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
           : 0;
         onProgress?.(percentage);
       },
-      reject,
-      resolve,
+      (uploadError) => {
+        clearStallTimer();
+        const diagnostic = describeStorageUploadFailure(uploadError);
+        reject(new AnalysisApiError(diagnostic.message, diagnostic.code));
+      },
+      () => {
+        clearStallTimer();
+        resolve();
+      },
     );
   });
   return path;
