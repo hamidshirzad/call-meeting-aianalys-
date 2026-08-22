@@ -141,7 +141,9 @@ describe('GET /api/account', () => {
 
   it('returns a generic request-correlated error for repository failures', async () => {
     const dependencies = createDependencies();
-    dependencies.getOrCreateProfile = vi.fn().mockRejectedValue(new Error('database secret'));
+    dependencies.getOrCreateProfile = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('database secret'), { code: 5 }));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const response = await handleAccountRequest(
       new Request('https://example.test/api/account', {
@@ -160,7 +162,7 @@ describe('GET /api/account', () => {
         requestId: expect.any(String),
         stage: 'profile',
         errorName: 'Error',
-        errorCode: null,
+        errorCode: '5:NOT_FOUND',
         stackFrames: expect.any(Array),
       }),
     );
