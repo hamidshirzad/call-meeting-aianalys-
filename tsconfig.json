@@ -22,6 +22,7 @@
     "vite-env.d.ts",
     "auth/**/*.ts",
     "auth/**/*.tsx",
+    "api/**/*.ts",
     "components/AuthScreen.tsx",
     "components/ProtectedDashboard.tsx",
     "lib/**/*.ts",
