@@ -14,6 +14,7 @@ const profile: UserProfile = {
   plan: 'free',
   subscriptionStatus: 'none',
   entitled: false,
+  hasBillingAccount: false,
   currentPeriodEnd: null,
   cancelAtPeriodEnd: false,
   createdAt: null,

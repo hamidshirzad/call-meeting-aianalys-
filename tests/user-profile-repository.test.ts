@@ -126,4 +126,48 @@ describe('authoritative user profile repository', () => {
       entitled: false,
     });
   });
+
+  it('returns internal billing identifiers only through the server repository', async () => {
+    const fake = createFirestore({
+      uid: 'verified-uid',
+      email: principal.email,
+      emailVerified: principal.emailVerified,
+      displayName: principal.displayName,
+      plan: 'free',
+      subscriptionStatus: 'none',
+      entitled: false,
+      stripeCustomerId: 'cus_server',
+      stripeSubscriptionId: 'sub_server',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const repository = new UserProfileRepository(fake.firestore);
+
+    await expect(repository.getBillingIdentity(principal)).resolves.toEqual({
+      uid: 'verified-uid',
+      email: 'owner@example.com',
+      stripeCustomerId: 'cus_server',
+      stripeSubscriptionId: 'sub_server',
+      subscriptionStatus: 'none',
+    });
+  });
+
+  it('claims one Stripe Customer and reuses the winner during races', async () => {
+    const fake = createFirestore({
+      uid: 'verified-uid',
+      email: principal.email,
+      plan: 'free',
+      subscriptionStatus: 'none',
+      stripeCustomerId: null,
+    });
+    const repository = new UserProfileRepository(fake.firestore);
+
+    await expect(repository.claimStripeCustomer('verified-uid', 'cus_first')).resolves.toBe(
+      'cus_first',
+    );
+    await expect(repository.claimStripeCustomer('verified-uid', 'cus_second')).resolves.toBe(
+      'cus_first',
+    );
+    expect(fake.data()).toMatchObject({ stripeCustomerId: 'cus_first' });
+  });
 });

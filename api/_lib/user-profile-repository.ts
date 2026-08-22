@@ -5,6 +5,7 @@ import {
   type Timestamp,
 } from 'firebase-admin/firestore';
 import type { VerifiedPrincipal } from './firebase-auth';
+import { isSubscriptionEntitled } from './entitlement-policy';
 
 export type SubscriptionPlan = 'free' | 'pro';
 export type SubscriptionStatus =
@@ -26,10 +27,19 @@ export interface UserProfile {
   plan: SubscriptionPlan;
   subscriptionStatus: SubscriptionStatus;
   entitled: boolean;
+  hasBillingAccount: boolean;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
   createdAt: string | null;
   updatedAt: string | null;
+}
+
+export interface BillingIdentity {
+  uid: string;
+  email: string | null;
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
+  subscriptionStatus: SubscriptionStatus;
 }
 
 const subscriptionStatuses = new Set<SubscriptionStatus>([
@@ -69,6 +79,8 @@ function toSubscriptionStatus(value: unknown): SubscriptionStatus {
 
 function toProfile(principal: VerifiedPrincipal, data: DocumentData): UserProfile {
   const plan: SubscriptionPlan = data.plan === 'pro' ? 'pro' : 'free';
+  const subscriptionStatus = toSubscriptionStatus(data.subscriptionStatus);
+  const pastDueSince = stringOrNull(data.pastDueSince);
 
   return {
     uid: principal.uid,
@@ -76,8 +88,9 @@ function toProfile(principal: VerifiedPrincipal, data: DocumentData): UserProfil
     emailVerified: principal.emailVerified,
     displayName: principal.displayName,
     plan,
-    subscriptionStatus: toSubscriptionStatus(data.subscriptionStatus),
-    entitled: plan === 'pro' && data.entitled === true,
+    subscriptionStatus,
+    entitled: plan === 'pro' && isSubscriptionEntitled(subscriptionStatus, pastDueSince),
+    hasBillingAccount: stringOrNull(data.stripeCustomerId) !== null,
     currentPeriodEnd: stringOrNull(data.currentPeriodEnd),
     cancelAtPeriodEnd: data.cancelAtPeriodEnd === true,
     createdAt: timestampToIso(data.createdAt),
@@ -108,6 +121,7 @@ export class UserProfileRepository {
           stripeSubscriptionId: null,
           stripePriceId: null,
           currentPeriodEnd: null,
+          pastDueSince: null,
           cancelAtPeriodEnd: false,
           createdAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
@@ -137,5 +151,41 @@ export class UserProfileRepository {
     }
 
     return toProfile(principal, snapshot.data() ?? {});
+  }
+
+  async getBillingIdentity(principal: VerifiedPrincipal): Promise<BillingIdentity> {
+    await this.getOrCreate(principal);
+    const snapshot = await this.firestore.collection('users').doc(principal.uid).get();
+    const data = snapshot.data() ?? {};
+
+    return {
+      uid: principal.uid,
+      email: principal.email,
+      stripeCustomerId: stringOrNull(data.stripeCustomerId),
+      stripeSubscriptionId: stringOrNull(data.stripeSubscriptionId),
+      subscriptionStatus: toSubscriptionStatus(data.subscriptionStatus),
+    };
+  }
+
+  async claimStripeCustomer(uid: string, candidateCustomerId: string): Promise<string> {
+    const reference = this.firestore.collection('users').doc(uid);
+
+    return this.firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(reference);
+      if (!snapshot.exists) {
+        throw new Error('The billing profile does not exist.');
+      }
+
+      const existingCustomerId = stringOrNull(snapshot.data()?.stripeCustomerId);
+      if (existingCustomerId) {
+        return existingCustomerId;
+      }
+
+      transaction.update(reference, {
+        stripeCustomerId: candidateCustomerId,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      return candidateCustomerId;
+    });
   }
 }
