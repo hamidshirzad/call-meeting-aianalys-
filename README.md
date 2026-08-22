@@ -2,10 +2,9 @@
 
 This branch is recovering the original browser prototype into a server-authoritative paid SaaS.
 
-Milestone 3 adds Stripe test-mode subscription billing: authenticated Checkout and Customer Portal
-routes, a signed raw-body webhook, durable event deduplication and ordering, and a dashboard that
-displays only the server-derived plan. AI analysis remains disabled until usage enforcement and
-Gemini are connected server-side in the next milestone.
+Milestone 4 completes the protected launch workflow: authenticated, UID-scoped temporary audio
+uploads; transactional Free and Pro usage enforcement; server-only Gemini analysis; saved report
+history; and server-authorized report deletion. Stripe remains the only subscription authority.
 
 ## Current trust model
 
@@ -20,6 +19,16 @@ Gemini are connected server-side in the next milestone.
 - Older subscription events cannot overwrite newer subscription state.
 - Firestore rules deny browser writes to profiles, reports, usage, subscriptions, and Stripe events.
 - Firebase Admin, Gemini, Stripe keys, and webhook secrets remain server-only.
+- Firebase Storage rules permit only owner-scoped audio creation up to 50 MB and deny browser
+  reads, overwrites, and deletes.
+- Analysis verifies the Firebase token before inspecting an upload and rejects any path outside the
+  verified UID.
+- Free and Pro plans receive 5 and 50 completed analyses per UTC month. Transactional reservations
+  prevent concurrent requests from exceeding those limits.
+- Failed processing releases its reservation. Only a report saved in the same transaction consumes
+  usage.
+- Temporary audio is removed from Firebase Storage and the Vercel function after every request;
+  Gemini Files API objects are also deleted after processing.
 - New server-created profiles always start on `free`, with `subscriptionStatus: none` and
   `entitled: false`.
 
@@ -34,6 +43,12 @@ Gemini are connected server-side in the next milestone.
 6. The webhook transaction deduplicates the event, rejects stale state, and updates Firestore.
 7. The browser refreshes the account profile and displays the webhook-derived plan.
 8. A user with a Stripe Customer can open `POST /api/billing/portal` to manage billing.
+9. An authenticated user uploads audio to `users/{uid}/uploads/{random-file}` under Storage rules.
+10. `POST /api/analysis` verifies the token and path, validates 50 MB/60-minute limits, reserves
+    usage transactionally, and sends the temporary local file to Gemini from the server only.
+11. Successful analysis saves the report and completes usage atomically; failure releases usage.
+12. `GET /api/reports` returns owner history and current usage. `DELETE /api/reports` deletes only a
+    report beneath the verified UID.
 
 ## Local setup
 
@@ -63,6 +78,8 @@ Server-only Firebase Admin values:
 - `FIREBASE_PROJECT_ID`
 - `FIREBASE_CLIENT_EMAIL`
 - `FIREBASE_PRIVATE_KEY` (escaped `\\n` newlines are normalized server-side)
+- `FIREBASE_STORAGE_BUCKET` (optional; defaults to
+  `<FIREBASE_PROJECT_ID>.firebasestorage.app`)
 
 Server-only Stripe test values:
 
@@ -71,9 +88,10 @@ Server-only Stripe test values:
 - `STRIPE_PRO_MONTHLY_PRICE_ID`: the one allowlisted recurring Pro Price
 - `APP_URL`: the exact HTTPS origin for this environment, with no path
 
-Server-only future AI value:
+Server-only AI values:
 
 - `GEMINI_API_KEY`
+- `GEMINI_MODEL` (optional; defaults to `gemini-3.7-flash`)
 
 Never add `VITE_` to a Gemini key, Stripe secret, webhook secret, Firebase Admin credential, or any
 equivalent alias. Preview and Production must use separate scoped values. `APP_URL` must point to the
@@ -166,13 +184,35 @@ Before exposing a Preview:
 1. Use the intended dedicated Firebase project.
 2. Enable Email/Password Authentication and optionally Google Authentication.
 3. Add the stable Preview and canonical Vercel hosts to Firebase Authorized domains.
-4. Create Firestore and deploy `firestore.rules` before allowing users into the application.
+4. Create Firestore and Firebase Storage, then deploy `firestore.rules` and `storage.rules` before
+   allowing users into the application.
 5. Configure a dedicated, least-privileged Firebase Admin service account only in the server
    environment.
 
 The repository includes Firestore emulator ports in `firebase.json`. `npm run test:rules` proves
 owner-only reads and browser-write denial for profiles, reports, usage, and Stripe event records
 when the emulator binary is available.
+
+## Analysis endpoints
+
+All analysis and report endpoints require a Firebase ID token in the `Authorization` header. They
+ignore browser plan claims and reject browser-supplied UIDs.
+
+### `POST /api/analysis`
+
+Accepts only a small JSON body containing the authenticated user's temporary `storagePath` and a
+display-only `originalName`. The server checks object metadata, downloads to a unique temporary
+path, reads duration when the format exposes it, reserves usage, calls Gemini, saves the report,
+and cleans up in a `finally` block. Raw audio, transcripts, and model output are never logged.
+
+### `GET /api/reports`
+
+Returns up to 30 newest reports for the verified UID plus the current UTC-month usage summary.
+
+### `DELETE /api/reports`
+
+Accepts only `{ "reportId": "..." }` and deletes that document under the verified UID. Deleting a
+report does not refund already completed monthly usage.
 
 ## Verification
 
@@ -189,10 +229,17 @@ The client-secret guard scans browser-accessible source and rejects known server
 through dot or bracket access on `process.env` and `import.meta.env`, forbidden `VITE_` secret
 aliases, and hardcoded Stripe/webhook/private-key patterns.
 
-Milestone 3's unit suite covers Firebase authorization, browser impersonation attempts, the server
+The unit suite covers Firebase authorization, browser impersonation attempts, the server
 Price allowlist, Customer reuse, Checkout and Portal boundaries, raw-body signature verification,
 event deduplication, stale-event rejection, cancellation and payment-failure state, seven-day
-`past_due` grace, fail-closed statuses, and the webhook-controlled dashboard.
+`past_due` grace, fail-closed statuses, UID-scoped upload paths, MIME/size/duration policy,
+concurrent Free/Pro reservations, failure release, completed-only charging, report ownership,
+Gemini response validation, temporary cleanup, and the upload/history dashboard.
+
+`vercel.json` requests a 300-second maximum for the analysis function. The actual maximum still
+depends on the selected Vercel plan. Measure representative 50 MB/60-minute calls in Preview; if
+they exceed the available synchronous duration, move analysis to a durable asynchronous worker
+before Production rather than silently lowering security or reliability.
 
 ## Tax and live-mode blocker
 
@@ -209,11 +256,6 @@ confirmed.
 
 ## Deferred work
 
-- Transactional Free/Pro usage reservations and limits
-- Server-side Gemini analysis
-- Secure audio upload and temporary-object deletion
-- Saved report history and deletion
-- Storage upload rules
 - Full re-authenticated account/data deletion
 - Vercel Preview end-to-end verification
 - Documented Belgian/EU VAT treatment and validated Stripe Tax setup before live billing

@@ -25,14 +25,21 @@ const freeProfile: AccountProfile = {
 };
 
 function respondWith(profile: AccountProfile) {
+  const usage = {
+    period: '2026-08', plan: profile.entitled ? 'pro' : 'free', completed: 0,
+    reserved: 0, limit: profile.entitled ? 50 : 5, remaining: profile.entitled ? 50 : 5,
+  };
   vi.stubGlobal(
     'fetch',
-    vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ profile }), {
+    vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const path = String(input);
+      return Promise.resolve(new Response(JSON.stringify(
+        path.includes('/api/reports') ? { reports: [], usage } : { profile },
+      ), {
         status: 200,
         headers: { 'content-type': 'application/json' },
-      }),
-    ),
+      }));
+    }),
   );
 }
 

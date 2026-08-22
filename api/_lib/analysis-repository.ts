@@ -29,14 +29,15 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
+const supportedSubscriptionStatuses = new Set<SubscriptionStatus>([
+  'none', 'active', 'trialing', 'past_due', 'unpaid', 'canceled',
+  'incomplete', 'incomplete_expired', 'paused',
+]);
+
 function planAndLimit(profile: Record<string, unknown>) {
-  const supportedStatuses = new Set<SubscriptionStatus>([
-    'none', 'active', 'trialing', 'past_due', 'unpaid', 'canceled',
-    'incomplete', 'incomplete_expired', 'paused',
-  ]);
   const status =
     typeof profile.subscriptionStatus === 'string' &&
-    supportedStatuses.has(profile.subscriptionStatus as SubscriptionStatus)
+    supportedSubscriptionStatuses.has(profile.subscriptionStatus as SubscriptionStatus)
       ? profile.subscriptionStatus as SubscriptionStatus
       : 'none';
   const pro =

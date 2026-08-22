@@ -6,6 +6,7 @@ import {
   fetchAccount,
   type AccountProfile,
 } from '../lib/billing-api';
+import AnalysisWorkspace from './AnalysisWorkspace';
 
 interface ProtectedDashboardProps {
   user: User;
@@ -106,17 +107,7 @@ export default function ProtectedDashboard({ user, onLogout }: ProtectedDashboar
         {error ? <div className="error-notice billing-banner" role="alert">{error}</div> : null}
 
         <section className="dashboard-grid">
-          <article className="dashboard-card feature-card">
-            <p className="eyebrow">Analysis</p>
-            <h2>Secure billing boundary ready</h2>
-            <p className="muted">
-              Firebase proves identity and Stripe webhooks control entitlement. Call analysis stays
-              disabled until usage enforcement and Gemini are connected server-side.
-            </p>
-            <div className="notice" role="status">
-              No Gemini credential or AI request is exposed to this browser.
-            </div>
-          </article>
+          <AnalysisWorkspace user={user} />
 
           <article className="dashboard-card billing-card">
             <p className="eyebrow">Billing</p>
@@ -189,11 +180,16 @@ export default function ProtectedDashboard({ user, onLogout }: ProtectedDashboar
 
           <article className="dashboard-card feature-card">
             <p className="eyebrow">Security checkpoint</p>
-            <h2>Milestone 3 foundation</h2>
+            <h2>Milestone 4 trust boundary</h2>
+            <p className="muted">
+              Stripe webhooks control entitlement. Authentication identifies the account but does
+              not grant Pro from the redirect.
+            </p>
             <ul className="trust-list">
-              <li>Server Price allowlist and verified Firebase UID</li>
-              <li>Signed raw-body Stripe webhooks with event deduplication</li>
               <li>Webhook-controlled plan, status, and entitlement</li>
+              <li>Verified UID-scoped temporary audio uploads</li>
+              <li>Atomic Free and Pro usage enforcement</li>
+              <li>Server-only Gemini and saved report history</li>
             </ul>
           </article>
         </section>
