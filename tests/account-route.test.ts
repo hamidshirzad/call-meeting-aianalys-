@@ -155,6 +155,16 @@ describe('GET /api/account', () => {
     expect(body).toContain('INTERNAL_ERROR');
     expect(body).not.toContain('database secret');
     expect(errorSpy).toHaveBeenCalledWith(
+      '[api] account stage failed',
+      expect.objectContaining({
+        requestId: expect.any(String),
+        stage: 'profile',
+        errorName: 'Error',
+        errorCode: null,
+        stackFrames: expect.any(Array),
+      }),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
       '[api] request failed',
       expect.objectContaining({ requestId: expect.any(String), errorName: 'Error' }),
     );
