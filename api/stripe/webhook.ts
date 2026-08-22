@@ -1,6 +1,7 @@
 import type Stripe from 'stripe';
 import { ApiError, createRequestId, errorResponse, jsonResponse } from '../_lib/api-errors.js';
 import { getFirebaseAdminServices } from '../_lib/firebase-admin.js';
+import { createRuntimeFetchHandler } from '../_lib/runtime-handler.js';
 import { getStripeClient } from '../_lib/stripe-client.js';
 import { loadStripeEnvironment, type StripeEnvironment } from '../_lib/stripe-env.js';
 import {
@@ -174,4 +175,4 @@ export async function handleStripeWebhook(
   }
 }
 
-export default { fetch: handleStripeWebhook };
+export default { fetch: createRuntimeFetchHandler(handleStripeWebhook) };

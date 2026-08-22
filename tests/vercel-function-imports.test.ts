@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createRuntimeFetchHandler } from '../api/_lib/runtime-handler';
 
 function typeScriptFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -33,5 +34,21 @@ describe('Vercel Node function module graph', () => {
     }
 
     expect(failures).toEqual([]);
+  });
+
+  it('does not pass Vercel runtime context into test dependency slots', async () => {
+    const handler = vi.fn(async (_request: Request, dependencies = 'default-dependencies') =>
+      new Response(dependencies),
+    );
+    const runtimeFetch = createRuntimeFetchHandler(handler);
+    const request = new Request('https://example.test/api/account');
+
+    const response = await (runtimeFetch as unknown as (
+      request: Request,
+      context: unknown,
+    ) => Promise<Response>)(request, { waitUntil: vi.fn() });
+
+    await expect(response.text()).resolves.toBe('default-dependencies');
+    expect(handler).toHaveBeenCalledWith(request);
   });
 });

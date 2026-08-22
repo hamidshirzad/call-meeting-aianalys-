@@ -11,6 +11,7 @@ import {
   type VerifyIdToken,
 } from './_lib/firebase-auth.js';
 import { getFirebaseAdminServices } from './_lib/firebase-admin.js';
+import { createRuntimeFetchHandler } from './_lib/runtime-handler.js';
 import { UserProfileRepository, type UserProfile } from './_lib/user-profile-repository.js';
 
 export interface AccountHandlerDependencies {
@@ -94,5 +95,5 @@ export async function handleAccountRequest(
 }
 
 export default {
-  fetch: handleAccountRequest,
+  fetch: createRuntimeFetchHandler(handleAccountRequest),
 };

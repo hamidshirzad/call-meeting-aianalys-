@@ -6,6 +6,7 @@ import {
   type VerifyIdToken,
 } from '../_lib/firebase-auth.js';
 import { getFirebaseAdminServices } from '../_lib/firebase-admin.js';
+import { createRuntimeFetchHandler } from '../_lib/runtime-handler.js';
 import { generateIntegrationIdentifier, getStripeClient } from '../_lib/stripe-client.js';
 import { loadStripeEnvironment, type StripeEnvironment } from '../_lib/stripe-env.js';
 import {
@@ -136,4 +137,4 @@ export async function handleCheckoutRequest(
   }
 }
 
-export default { fetch: handleCheckoutRequest };
+export default { fetch: createRuntimeFetchHandler(handleCheckoutRequest) };
