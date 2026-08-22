@@ -19,6 +19,7 @@ import {
 } from 'firebase/auth';
 import { firebaseAuth, firebaseConfigurationError } from '../lib/firebase';
 import { getHumanAuthError } from './auth-errors';
+import { prepareFirebaseContinueUrl } from './firebase-continue-url';
 
 export type AuthStatus =
   | 'loading'
@@ -114,6 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const auth = await requireAuth();
           const provider = new GoogleAuthProvider();
           provider.setCustomParameters({ prompt: 'select_account' });
+          prepareFirebaseContinueUrl();
           await signInWithPopup(auth, provider);
         });
       },
