@@ -2,6 +2,11 @@ export type ApiErrorCode =
   | 'AUTH_TOKEN_MISSING'
   | 'AUTH_TOKEN_INVALID'
   | 'CLIENT_UID_FORBIDDEN'
+  | 'BILLING_PLAN_INVALID'
+  | 'BILLING_CUSTOMER_MISSING'
+  | 'BILLING_LIVE_MODE_FORBIDDEN'
+  | 'STRIPE_SIGNATURE_MISSING'
+  | 'STRIPE_SIGNATURE_INVALID'
   | 'METHOD_NOT_ALLOWED'
   | 'SERVER_NOT_CONFIGURED'
   | 'INTERNAL_ERROR';
@@ -56,7 +61,7 @@ export function errorResponse(error: unknown, requestId: string): Response {
       {
         error: {
           code: 'SERVER_NOT_CONFIGURED',
-          message: 'The server authentication boundary is not configured.',
+          message: 'The required server integration is not configured.',
           requestId,
         },
       },
