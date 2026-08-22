@@ -27,7 +27,7 @@ Enterprise, team features, developer API keys, referrals, gamification, video ge
 - [x] Remove browser Gemini and mock Stripe services
 - [x] Client-secret source/build guard
 - [x] Default-deny Firestore rules and emulator configuration
-- [ ] Server-side Firebase Admin boundary
+- [x] Server-side Firebase Admin boundary and UID-scoped account profile repository
 - [ ] Stripe Checkout, Portal, webhooks, and entitlement repository
 - [ ] Protected Gemini analysis and transactional usage
 - [ ] Preview and end-to-end external-service verification

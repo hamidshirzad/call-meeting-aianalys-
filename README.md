@@ -2,7 +2,7 @@
 
 This branch is recovering the original browser prototype into a server-authoritative paid SaaS.
 
-Milestone 1 establishes a reproducible build, Firebase Authentication, a protected application boundary, strict client/server environment separation, and default-deny Firestore rules. AI analysis and billing are deliberately unavailable until their verified server-side milestones are implemented.
+Milestone 2 adds the server identity foundation: Firebase Admin ID-token verification, a UID-scoped Firestore account repository, request-correlated API errors, and emulator-backed security-rule tests. AI analysis and billing remain deliberately unavailable until their own verified server-side milestones are implemented.
 
 ## Trust model
 
@@ -12,6 +12,8 @@ Milestone 1 establishes a reproducible build, Firebase Authentication, a protect
 - Firebase Admin, Gemini, Stripe secret keys, and webhook secrets remain server-only.
 - Firestore rules deny browser writes to profiles, reports, usage, subscriptions, and Stripe event records.
 - Local storage may be used only for harmless UI preferences.
+- `GET /api/account` derives its UID exclusively from a verified Firebase ID token.
+- New server-created profiles always start on `free`, with `subscriptionStatus: none` and `entitled: false`.
 
 ## Local setup
 
@@ -30,6 +32,7 @@ npm run typecheck
 npm test
 npm run build
 npm run check
+npm run test:rules
 ```
 
 The client-secret guard scans browser-accessible source and rejects known server credential names through dot or bracket access on both `process.env` and `import.meta.env`, forbidden `VITE_` secret aliases, and hardcoded Stripe/webhook/private-key patterns.
@@ -47,7 +50,33 @@ Before a Preview is exposed:
 5. Deploy `firestore.rules` before allowing users into the application.
 6. Use separate, least-privileged Firebase Admin credentials only in server environments during a later milestone.
 
-The repository includes emulator ports in `firebase.json`. Full emulator-backed rules tests will be added with the server-side Firestore repository milestone; Milestone 1 includes deterministic rule-policy checks and a default-deny ruleset.
+The repository includes emulator ports in `firebase.json`. `npm run test:rules` starts the Firestore emulator and proves owner-only reads plus browser-write denial for profiles, reports, usage, and Stripe event records.
+
+## Server account endpoint
+
+`GET /api/account` requires a Firebase ID token:
+
+```http
+Authorization: Bearer <firebase-id-token>
+```
+
+The function verifies revocation through Firebase Admin, ignores all browser identity state, rejects `uid` and `userId` query parameters, and creates or reads only `users/{verifiedUid}`. It may synchronize verified email/name fields, but it never overwrites plan, entitlement, or Stripe identifiers while doing so.
+
+The endpoint returns bounded errors:
+
+- `401` for missing or invalid Firebase tokens
+- `400` for client UID impersonation attempts
+- `405` for unsupported methods
+- `503` when server-only Firebase Admin configuration is absent
+- `500` for unexpected failures, with a request ID and no internal error details
+
+Required server-only Firebase Admin variables:
+
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY` (escaped `\\n` newlines are normalized server-side)
+
+These credentials are not needed by the Vite browser build and must never receive a `VITE_` prefix.
 
 ## Environment boundary
 
@@ -64,7 +93,6 @@ Everything else is server-only. In particular, never create `VITE_GEMINI_API_KEY
 
 ## Deferred work
 
-- Firestore profile/subscription repositories
 - Stripe Checkout, Customer Portal, and verified webhooks
 - Transactional usage enforcement
 - Server-side Gemini analysis

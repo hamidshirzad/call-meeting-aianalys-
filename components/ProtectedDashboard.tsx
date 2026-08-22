@@ -27,13 +27,14 @@ export default function ProtectedDashboard({ user, onLogout }: ProtectedDashboar
         <section className="dashboard-grid">
           <article className="dashboard-card feature-card">
             <p className="eyebrow">Analysis</p>
-            <h2>Secure call analysis is being connected</h2>
+            <h2>Server identity boundary ready</h2>
             <p className="muted">
-              Upload and recording actions are disabled until the protected server endpoint can
-              verify your Firebase session, enforce usage, and call Gemini without exposing a key.
+              The protected account endpoint can verify Firebase sessions and create UID-scoped
+              profiles. Upload and recording stay disabled until usage enforcement and Gemini are
+              connected server-side.
             </p>
             <div className="notice" role="status">
-              No client-side AI request will be made in this milestone.
+              No Gemini credential or AI request is exposed to this browser.
             </div>
           </article>
 
@@ -61,11 +62,11 @@ export default function ProtectedDashboard({ user, onLogout }: ProtectedDashboar
 
           <article className="dashboard-card feature-card">
             <p className="eyebrow">Security checkpoint</p>
-            <h2>Milestone 1</h2>
+            <h2>Milestone 2 foundation</h2>
             <ul className="trust-list">
-              <li>Protected authenticated rendering</li>
-              <li>Server secrets excluded from Vite</li>
-              <li>Subscription state no longer trusted from localStorage</li>
+              <li>Firebase Admin ID-token verification</li>
+              <li>UID-scoped server profile repository</li>
+              <li>Browser writes to authoritative data denied</li>
             </ul>
           </article>
         </section>
