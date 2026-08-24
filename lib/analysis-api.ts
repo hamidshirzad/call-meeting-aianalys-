@@ -1,11 +1,10 @@
 import type { User } from 'firebase/auth';
-import { ref, uploadBytesResumable } from 'firebase/storage';
-import { firebaseStorage } from './firebase';
 import {
-  describeStorageUploadFailure,
-  stalledStorageUpload,
+  canceledUpload,
+  describeUploadFailure,
+  stalledUpload,
   STORAGE_UPLOAD_STALL_MS,
-} from './storage-upload-error';
+} from './upload-error';
 import type { AnalysisUsageSummary, SavedAnalysisReport } from '../types';
 
 const MAX_AUDIO_BYTES = 50 * 1024 * 1024;
@@ -62,13 +61,33 @@ export function validateClientAudioFile(file: File): string {
   return contentType;
 }
 
-export function createUploadPath(uid: string, fileName: string): string {
-  const safeName = fileName
-    .normalize('NFKD')
-    .replace(/[^a-zA-Z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(-100) || 'call-audio';
-  return `users/${uid}/uploads/${crypto.randomUUID()}-${safeName}`;
+/**
+ * Reads the audio's duration in the browser.
+ *
+ * The server never receives the bytes, so it cannot measure this itself. Purely
+ * display metadata — the server bounds whatever arrives and enforces the real
+ * limit on size, which it verifies against Gemini independently.
+ */
+export function readAudioDuration(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    // Never let a duration read break an upload: it is display metadata, and a
+    // codec the browser cannot decode is still one Gemini may handle fine.
+    try {
+      const url = URL.createObjectURL(file);
+      const audio = new Audio();
+      const finish = (value: number | null) => {
+        URL.revokeObjectURL(url);
+        resolve(value);
+      };
+      audio.preload = 'metadata';
+      audio.onloadedmetadata = () =>
+        finish(Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : null);
+      audio.onerror = () => finish(null);
+      audio.src = url;
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 async function authenticatedJson<T>(
@@ -104,69 +123,119 @@ async function authenticatedJson<T>(
   return value as T;
 }
 
-async function uploadAudio(
-  user: User,
+/**
+ * Sends the audio to the URL the server minted, and returns the Gemini file name.
+ *
+ * XMLHttpRequest rather than fetch because it reports upload progress, which
+ * fetch still cannot do. The bytes go straight to Google — no API key is needed
+ * here, since the URL itself carries the upload session.
+ */
+export function putAudioToUploadUrl(
+  uploadUrl: string,
   file: File,
+  contentType: string,
   onProgress?: (percentage: number) => void,
 ): Promise<string> {
-  if (!firebaseStorage) {
-    throw new AnalysisApiError('Firebase Storage is not configured.', 'STORAGE_NOT_CONFIGURED');
-  }
-  const contentType = validateClientAudioFile(file);
-  const path = createUploadPath(user.uid, file.name);
-  const task = uploadBytesResumable(ref(firebaseStorage, path), file, { contentType });
-  await new Promise<void>((resolve, reject) => {
-    let lastTransferred = 0;
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    let lastLoaded = 0;
     let stallTimer: ReturnType<typeof setTimeout> | null = null;
 
     const clearStallTimer = () => {
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = null;
     };
+    const fail = (diagnostic: { code: string; message: string }) => {
+      clearStallTimer();
+      reject(new AnalysisApiError(diagnostic.message, diagnostic.code));
+    };
     const resetStallTimer = () => {
       clearStallTimer();
       stallTimer = setTimeout(() => {
-        reject(new AnalysisApiError(stalledStorageUpload.message, stalledStorageUpload.code));
-        task.cancel();
+        // Reject before aborting: abort fires its own handler, and the first
+        // settle wins. Rejecting first is what surfaces "stalled" to the user
+        // rather than the "canceled" the abort would otherwise report.
+        fail(stalledUpload);
+        request.abort();
       }, STORAGE_UPLOAD_STALL_MS);
     };
 
-    resetStallTimer();
-    task.on(
-      'state_changed',
-      (snapshot) => {
-        if (snapshot.bytesTransferred > lastTransferred) {
-          lastTransferred = snapshot.bytesTransferred;
-          resetStallTimer();
+    request.upload.onprogress = (event) => {
+      if (event.loaded > lastLoaded) {
+        lastLoaded = event.loaded;
+        resetStallTimer();
+      }
+      onProgress?.(
+        event.lengthComputable && event.total > 0
+          ? Math.round((event.loaded / event.total) * 100)
+          : 0,
+      );
+    };
+    request.onerror = () => fail(describeUploadFailure(null));
+    request.ontimeout = () => fail(stalledUpload);
+    request.onabort = () => fail(canceledUpload);
+    request.onload = () => {
+      clearStallTimer();
+      if (request.status < 200 || request.status >= 300) {
+        return fail(describeUploadFailure(request.status));
+      }
+      try {
+        const name = JSON.parse(request.responseText)?.file?.name;
+        if (typeof name !== 'string' || !name) {
+          return fail(describeUploadFailure(null));
         }
-        const percentage = snapshot.totalBytes > 0
-          ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
-          : 0;
-        onProgress?.(percentage);
-      },
-      (uploadError) => {
-        clearStallTimer();
-        const diagnostic = describeStorageUploadFailure(uploadError);
-        reject(new AnalysisApiError(diagnostic.message, diagnostic.code));
-      },
-      () => {
-        clearStallTimer();
-        resolve();
-      },
-    );
+        onProgress?.(100);
+        resolve(name);
+      } catch {
+        fail(describeUploadFailure(null));
+      }
+    };
+
+    request.open('PUT', uploadUrl, true);
+    request.setRequestHeader('X-Goog-Upload-Command', 'upload, finalize');
+    request.setRequestHeader('X-Goog-Upload-Offset', '0');
+    request.setRequestHeader('Content-Type', contentType);
+    resetStallTimer();
+    request.send(file);
   });
-  return path;
 }
 
+interface UploadTicket {
+  uploadUrl: string;
+  reservationId: string;
+}
+
+/**
+ * Uploads a call and returns its analysis.
+ *
+ * Three steps: ask the server to authorize the upload and mint a URL, send the
+ * bytes straight to Gemini, then ask the server to analyze what was uploaded.
+ * The audio never passes through our own API, which is what allows files far
+ * above the platform's request body limit.
+ */
 export async function analyzeAudio(
   user: User,
   file: File,
   onProgress?: (percentage: number) => void,
 ): Promise<AnalysisResult> {
-  const storagePath = await uploadAudio(user, file, onProgress);
+  const contentType = validateClientAudioFile(file);
+
+  const ticket = await authenticatedJson<UploadTicket>(
+    user,
+    // Must match api/analysis-upload-url.ts: Vercel maps files to routes
+    // literally, so a nested-looking path would 404 in production.
+    '/api/analysis-upload-url',
+    'POST',
+    { size: file.size, contentType },
+  );
+
+  const fileName = await putAudioToUploadUrl(ticket.uploadUrl, file, contentType, onProgress);
+
   return authenticatedJson<AnalysisResult>(user, '/api/analysis', 'POST', {
-    storagePath,
+    reservationId: ticket.reservationId,
+    fileName,
     originalName: file.name,
+    durationSeconds: await readAudioDuration(file),
   });
 }
 

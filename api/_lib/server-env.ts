@@ -4,7 +4,6 @@ export interface FirebaseAdminEnvironment {
   projectId: string;
   clientEmail: string;
   privateKey: string;
-  storageBucket: string;
 }
 
 export interface GeminiEnvironment {
@@ -52,10 +51,7 @@ export function loadFirebaseAdminEnvironment(
     throw new ServerConfigurationError(['FIREBASE_PRIVATE_KEY']);
   }
 
-  const storageBucket =
-    environment.FIREBASE_STORAGE_BUCKET?.trim() || `${projectId}.firebasestorage.app`;
-
-  return Object.freeze({ projectId, clientEmail, privateKey, storageBucket });
+  return Object.freeze({ projectId, clientEmail, privateKey });
 }
 
 export function loadGeminiEnvironment(

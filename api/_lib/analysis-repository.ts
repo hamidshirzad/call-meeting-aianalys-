@@ -21,6 +21,19 @@ export interface UsageReservation {
   limit: number;
 }
 
+/**
+ * What the reservation remembers about the upload it authorized.
+ *
+ * `geminiNonce` never leaves the server. It is written into the Gemini file's
+ * displayName when the upload URL is minted, so matching it later proves the
+ * uploaded file is the one this reservation paid for.
+ */
+export interface ReservedUpload extends UsageReservation {
+  geminiNonce: string;
+  declaredSize: number;
+  contentType: string;
+}
+
 function nonNegativeInteger(value: unknown): number {
   return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : 0;
 }
@@ -55,7 +68,11 @@ export class AnalysisRepository {
       (principal) => new UserProfileRepository(firestore).getOrCreate(principal),
   ) {}
 
-  async reserve(principal: VerifiedPrincipal, reservationId: string): Promise<UsageReservation> {
+  async reserve(
+    principal: VerifiedPrincipal,
+    reservationId: string,
+    upload: { geminiNonce: string; declaredSize: number; contentType: string },
+  ): Promise<ReservedUpload> {
     await this.ensureProfile(principal);
     const period = usagePeriod();
     const userReference = this.firestore.collection('users').doc(principal.uid);
@@ -96,11 +113,54 @@ export class AnalysisRepository {
         plan,
         limit,
         status: 'reserved',
+        geminiNonce: upload.geminiNonce,
+        declaredSize: upload.declaredSize,
+        contentType: upload.contentType,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
-      return { uid: principal.uid, id: reservationId, period, plan, limit };
+      return { uid: principal.uid, id: reservationId, period, plan, limit, ...upload };
     });
+  }
+
+  /**
+   * Loads a reservation for the analysis step.
+   *
+   * Scoped under the caller's own UID, so a client that passes someone else's
+   * reservation ID simply finds nothing. Only 'reserved' rows are returned,
+   * which is what stops a completed reservation being spent twice.
+   */
+  async loadReservation(uid: string, reservationId: string): Promise<ReservedUpload> {
+    if (!/^[a-zA-Z0-9-]{16,80}$/.test(reservationId)) {
+      throw new ApiError(400, 'ANALYSIS_INPUT_INVALID', 'The analysis request is invalid.');
+    }
+
+    const snapshot = await this.firestore
+      .collection('users')
+      .doc(uid)
+      .collection('analysisReservations')
+      .doc(reservationId)
+      .get();
+
+    const data = snapshot.data();
+    if (!snapshot.exists || !data || data.status !== 'reserved') {
+      throw new ApiError(
+        404,
+        'ANALYSIS_RESERVATION_INVALID',
+        'This upload is no longer awaiting analysis. Start a new analysis.',
+      );
+    }
+
+    return {
+      uid,
+      id: reservationId,
+      period: String(data.period),
+      plan: data.plan === 'pro' ? 'pro' : 'free',
+      limit: nonNegativeInteger(data.limit),
+      geminiNonce: String(data.geminiNonce ?? ''),
+      declaredSize: nonNegativeInteger(data.declaredSize),
+      contentType: String(data.contentType ?? ''),
+    };
   }
 
   async complete(reservation: UsageReservation, report: SavedAnalysisReport): Promise<void> {

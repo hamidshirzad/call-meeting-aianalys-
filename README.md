@@ -19,16 +19,17 @@ history; and server-authorized report deletion. Stripe remains the only subscrip
 - Older subscription events cannot overwrite newer subscription state.
 - Firestore rules deny browser writes to profiles, reports, usage, subscriptions, and Stripe events.
 - Firebase Admin, Gemini, Stripe keys, and webhook secrets remain server-only.
-- Firebase Storage rules permit only owner-scoped audio creation up to 50 MB and deny browser
-  reads, overwrites, and deletes.
-- Analysis verifies the Firebase token before inspecting an upload and rejects any path outside the
-  verified UID.
+- Audio uploads go straight from the browser to the Gemini Files API using a short-lived upload URL
+  minted server-side, so no storage bucket is involved and the API key never reaches the browser.
+- Analysis verifies the Firebase token, loads the reservation under the verified UID only, and
+  requires the uploaded file to carry the server-only nonce recorded on that reservation.
+- The size cap is re-verified against the size Gemini actually received, not the size the browser
+  declared.
 - Free and Pro plans receive 5 and 50 completed analyses per UTC month. Transactional reservations
   prevent concurrent requests from exceeding those limits.
 - Failed processing releases its reservation. Only a report saved in the same transaction consumes
   usage.
-- Temporary audio is removed from Firebase Storage and the Vercel function after every request;
-  Gemini Files API objects are also deleted after processing.
+- Uploaded Gemini Files API objects are deleted on every exit path, including rejected requests.
 - New server-created profiles always start on `free`, with `subscriptionStatus: none` and
   `entitled: false`.
 
@@ -43,9 +44,10 @@ history; and server-authorized report deletion. Stripe remains the only subscrip
 6. The webhook transaction deduplicates the event, rejects stale state, and updates Firestore.
 7. The browser refreshes the account profile and displays the webhook-derived plan.
 8. A user with a Stripe Customer can open `POST /api/billing/portal` to manage billing.
-9. An authenticated user uploads audio to `users/{uid}/uploads/{random-file}` under Storage rules.
-10. `POST /api/analysis` verifies the token and path, validates 50 MB/60-minute limits, reserves
-    usage transactionally, and sends the temporary local file to Gemini from the server only.
+9. `POST /api/analysis-upload-url` verifies the token, validates the declared type and size,
+    reserves usage transactionally, and returns a Gemini upload URL carrying a server-only nonce.
+10. The browser sends the audio directly to that URL, then `POST /api/analysis` verifies the nonce
+    and the size Gemini received before analyzing.
 11. Successful analysis saves the report and completes usage atomically; failure releases usage.
 12. `GET /api/reports` returns owner history and current usage. `DELETE /api/reports` deletes only a
     report beneath the verified UID.
@@ -69,7 +71,6 @@ Browser-safe Firebase identifiers:
 - `VITE_FIREBASE_API_KEY`
 - `VITE_FIREBASE_AUTH_DOMAIN`
 - `VITE_FIREBASE_PROJECT_ID`
-- `VITE_FIREBASE_STORAGE_BUCKET`
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 - `VITE_FIREBASE_APP_ID`
 
@@ -78,8 +79,6 @@ Server-only Firebase Admin values:
 - `FIREBASE_PROJECT_ID`
 - `FIREBASE_CLIENT_EMAIL`
 - `FIREBASE_PRIVATE_KEY` (escaped `\\n` newlines are normalized server-side)
-- `FIREBASE_STORAGE_BUCKET` (optional; defaults to
-  `<FIREBASE_PROJECT_ID>.firebasestorage.app`)
 
 Server-only Stripe test values:
 
@@ -184,8 +183,9 @@ Before exposing a Preview:
 1. Use the intended dedicated Firebase project.
 2. Enable Email/Password Authentication and optionally Google Authentication.
 3. Add the stable Preview and canonical Vercel hosts to Firebase Authorized domains.
-4. Create Firestore and Firebase Storage, then deploy `firestore.rules` and `storage.rules` before
-   allowing users into the application.
+4. Create Firestore and deploy `firestore.rules` before allowing users into the application.
+   Cloud Storage is not used; `storage.rules` remains in the repository only so the bucket path can
+   be restored if durable audio retention is ever required.
 5. Configure a dedicated, least-privileged Firebase Admin service account only in the server
    environment.
 
@@ -198,12 +198,23 @@ when the emulator binary is available.
 All analysis and report endpoints require a Firebase ID token in the `Authorization` header. They
 ignore browser plan claims and reject browser-supplied UIDs.
 
+### `POST /api/analysis-upload-url`
+
+Accepts `{ "size": number, "contentType": string }`. Validates the declared type and size, reserves
+monthly usage, and returns `{ uploadUrl, reservationId }`. The upload URL is minted with a
+server-only nonce as the Gemini file's display name; that nonce is never sent to the browser. If
+Gemini refuses the session the reservation is released rather than left holding a slot.
+
+The browser then sends the audio directly to `uploadUrl`, bypassing Vercel's 4.5 MB request body
+limit, and receives the Gemini file name.
+
 ### `POST /api/analysis`
 
-Accepts only a small JSON body containing the authenticated user's temporary `storagePath` and a
-display-only `originalName`. The server checks object metadata, downloads to a unique temporary
-path, reads duration when the format exposes it, reserves usage, calls Gemini, saves the report,
-and cleans up in a `finally` block. Raw audio, transcripts, and model output are never logged.
+Accepts `{ "reservationId", "fileName", "originalName", "durationSeconds" }`. The reservation is
+read under the verified UID only, so another user's reservation ID resolves to nothing. The file
+must carry the reservation's nonce, and its size as reported by Gemini must be within the cap.
+Duration is browser-reported display metadata and is bounded server-side. The uploaded file is
+deleted on every exit path. Raw audio, transcripts, and model output are never logged.
 
 ### `GET /api/reports`
 

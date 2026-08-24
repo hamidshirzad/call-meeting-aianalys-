@@ -34,28 +34,63 @@ export function normalizeAudioType(contentType: string): string {
   return normalized;
 }
 
-export function assertOwnedUploadPath(path: unknown, uid: string): string {
-  if (typeof path !== 'string' || path.length > 320) {
+/** Gemini file resource names look like `files/abc123`. */
+export function assertGeminiFileName(value: unknown): string {
+  if (typeof value !== 'string' || !/^files\/[a-z0-9]{4,64}$/.test(value)) {
     throw new ApiError(400, 'ANALYSIS_INPUT_INVALID', 'Select an audio file to analyze.');
   }
+  return value;
+}
 
-  const prefix = `users/${uid}/uploads/`;
-  const fileName = path.slice(prefix.length);
-  if (
-    !path.startsWith(prefix) ||
-    !fileName ||
-    fileName.includes('/') ||
-    fileName.includes('..') ||
-    !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,180}$/.test(fileName)
-  ) {
+/**
+ * Proves an uploaded file belongs to the reservation that paid for it.
+ *
+ * Gemini file names are project-wide, so a client naming an arbitrary file could
+ * otherwise reach another user's audio. The nonce was written into displayName
+ * when the upload URL was minted and never left the server, so only the client
+ * that received that URL can produce a file carrying it.
+ *
+ * Size is re-checked here against what Gemini actually received. Once the server
+ * stops seeing the bytes this is the only place the 50 MB cap can be enforced
+ * for real, rather than trusted from the client's declared size.
+ */
+export function assertUploadMatchesReservation(
+  file: { displayName: string | null; sizeBytes: number },
+  reservation: { geminiNonce: string; declaredSize: number },
+): void {
+  if (!reservation.geminiNonce || file.displayName !== reservation.geminiNonce) {
     throw new ApiError(
       403,
-      'ANALYSIS_UPLOAD_INVALID',
+      'ANALYSIS_UPLOAD_UNVERIFIED',
       'The uploaded audio does not belong to this account.',
     );
   }
 
-  return path;
+  if (!Number.isFinite(file.sizeBytes) || file.sizeBytes <= 0) {
+    throw new ApiError(415, 'ANALYSIS_UPLOAD_INVALID', 'Upload a supported audio file.');
+  }
+
+  if (file.sizeBytes > MAX_AUDIO_BYTES || file.sizeBytes > reservation.declaredSize) {
+    throw new ApiError(
+      413,
+      'ANALYSIS_UPLOAD_TOO_LARGE',
+      'Audio files must be 50 MB or smaller.',
+    );
+  }
+}
+
+/**
+ * Bounds the duration the browser reports.
+ *
+ * The server no longer holds the audio, so it cannot measure this itself. The
+ * value is display metadata only — size, verified above against Gemini, is what
+ * actually caps cost.
+ */
+export function readReportedDuration(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return Math.min(value, MAX_AUDIO_DURATION_SECONDS);
 }
 
 export function validateUploadMetadata(size: number, contentType: string): void {

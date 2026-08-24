@@ -1,7 +1,3 @@
-import { unlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { parseFile } from 'music-metadata';
 import {
   ApiError,
   createRequestId,
@@ -9,14 +5,13 @@ import {
   jsonResponse,
 } from './_lib/api-errors.js';
 import {
-  assertOwnedUploadPath,
-  normalizeAudioType,
-  validateAudioDuration,
-  validateUploadMetadata,
+  assertGeminiFileName,
+  assertUploadMatchesReservation,
+  readReportedDuration,
 } from './_lib/analysis-policy.js';
 import {
   AnalysisRepository,
-  type UsageReservation,
+  type ReservedUpload,
 } from './_lib/analysis-repository.js';
 import {
   authenticateRequest,
@@ -24,7 +19,12 @@ import {
   type VerifyIdToken,
 } from './_lib/firebase-auth.js';
 import { getFirebaseAdminServices } from './_lib/firebase-admin.js';
-import { analyzeAudioWithGemini } from './_lib/gemini-analyzer.js';
+import {
+  analyzeAudioWithGemini,
+  deleteUploadedFile,
+  getUploadedFile,
+  type UploadedFile,
+} from './_lib/gemini-analyzer.js';
 import { createRuntimeFetchHandler } from './_lib/runtime-handler.js';
 import type {
   AnalysisUsageSummary,
@@ -32,25 +32,17 @@ import type {
   SalesCallAnalysisReport,
 } from '../types.js';
 
-export interface UploadMetadata {
-  size: number;
-  contentType: string;
-}
-
 type GeneratedReport = Omit<SalesCallAnalysisReport, 'id' | 'timestamp'>;
 
 export interface AnalysisHandlerDependencies {
   verifyIdToken: VerifyIdToken;
-  inspectUpload(path: string): Promise<UploadMetadata>;
-  downloadUpload(path: string, destination: string): Promise<void>;
-  deleteUpload(path: string): Promise<void>;
-  readDuration(path: string): Promise<number | null>;
-  reserve(principal: VerifiedPrincipal, reservationId: string): Promise<UsageReservation>;
-  analyze(path: string, mimeType: string): Promise<GeneratedReport>;
-  complete(reservation: UsageReservation, report: SavedAnalysisReport): Promise<void>;
-  release(reservation: UsageReservation): Promise<void>;
+  loadReservation(uid: string, reservationId: string): Promise<ReservedUpload>;
+  getUploadedFile(name: string): Promise<UploadedFile>;
+  deleteUploadedFile(name: string): Promise<void>;
+  analyze(file: UploadedFile, mimeType: string): Promise<GeneratedReport>;
+  complete(reservation: ReservedUpload, report: SavedAnalysisReport): Promise<void>;
+  release(reservation: ReservedUpload): Promise<void>;
   usage(principal: VerifiedPrincipal): Promise<AnalysisUsageSummary>;
-  removeLocalFile(path: string): Promise<void>;
 }
 
 function repository() {
@@ -60,41 +52,29 @@ function repository() {
 const defaultDependencies: AnalysisHandlerDependencies = {
   verifyIdToken: (token, checkRevoked) =>
     getFirebaseAdminServices().auth.verifyIdToken(token, checkRevoked),
-  inspectUpload: async (path) => {
-    const [metadata] = await getFirebaseAdminServices().storage.bucket().file(path).getMetadata();
-    return {
-      size: Number(metadata.size),
-      contentType: metadata.contentType ?? '',
-    };
-  },
-  downloadUpload: async (path, destination) => {
-    await getFirebaseAdminServices().storage.bucket().file(path).download({ destination });
-  },
-  deleteUpload: async (path) => {
-    await getFirebaseAdminServices().storage.bucket().file(path).delete({ ignoreNotFound: true });
-  },
-  readDuration: async (path) => {
-    const metadata = await parseFile(path, { duration: true });
-    const duration = metadata.format.duration;
-    return typeof duration === 'number' && Number.isFinite(duration) ? duration : null;
-  },
-  reserve: (principal, reservationId) => repository().reserve(principal, reservationId),
+  loadReservation: (uid, reservationId) => repository().loadReservation(uid, reservationId),
+  getUploadedFile,
+  deleteUploadedFile,
   analyze: analyzeAudioWithGemini,
   complete: (reservation, report) => repository().complete(reservation, report),
   release: (reservation) => repository().release(reservation),
   usage: (principal) => repository().usage(principal),
-  removeLocalFile: async (path) => {
-    await unlink(path).catch(() => undefined);
-  },
 };
 
 function safeFileName(value: unknown): string {
   if (typeof value !== 'string') return 'Sales call';
-  const normalized = value.replace(/[\u0000-\u001f/\\]/g, ' ').trim().slice(0, 180);
+  const normalized = value.replace(/[\x00-\x1f/\\]/g, ' ').trim().slice(0, 180);
   return normalized || 'Sales call';
 }
 
-async function readInput(request: Request): Promise<{ storagePath: unknown; originalName: string }> {
+interface AnalysisInput {
+  reservationId: unknown;
+  fileName: unknown;
+  originalName: string;
+  durationSeconds: number | null;
+}
+
+async function readInput(request: Request): Promise<AnalysisInput> {
   const contentLength = Number(request.headers.get('content-length') ?? 0);
   if (contentLength > 4_096) {
     throw new ApiError(413, 'ANALYSIS_INPUT_INVALID', 'The analysis request is too large.');
@@ -114,17 +94,37 @@ async function readInput(request: Request): Promise<{ storagePath: unknown; orig
       'User identity and plan must come from the verified server session.',
     );
   }
-  return { storagePath: input.storagePath, originalName: safeFileName(input.originalName) };
+
+  return {
+    reservationId: input.reservationId,
+    fileName: input.fileName,
+    originalName: safeFileName(input.originalName),
+    durationSeconds: readReportedDuration(input.durationSeconds),
+  };
 }
 
+/**
+ * Analyzes audio the browser uploaded straight to Gemini.
+ *
+ * The bytes never pass through this function, which is what lets a 50 MB file
+ * work at all under Vercel's 4.5 MB request body cap. Two checks replace the
+ * ownership guarantee that a UID-scoped storage path used to provide:
+ *
+ *   - the reservation is read under the caller's own UID, so another user's
+ *     reservation ID resolves to nothing;
+ *   - the file's displayName must match the nonce recorded on that reservation,
+ *     which only this server ever knew.
+ *
+ * The uploaded file is deleted in every exit path, including rejections, so a
+ * refused upload cannot linger in the project's Gemini file store.
+ */
 export async function handleAnalysisRequest(
   request: Request,
   dependencies: AnalysisHandlerDependencies = defaultDependencies,
 ): Promise<Response> {
   const requestId = createRequestId();
-  let storagePath: string | null = null;
-  let localPath: string | null = null;
-  let reservation: UsageReservation | null = null;
+  let geminiFileName: string | null = null;
+  let reservation: ReservedUpload | null = null;
   let completed = false;
 
   try {
@@ -133,39 +133,40 @@ export async function handleAnalysisRequest(
     }
     const principal = await authenticateRequest(request, dependencies.verifyIdToken);
     const input = await readInput(request);
-    storagePath = assertOwnedUploadPath(input.storagePath, principal.uid);
-    const upload = await dependencies.inspectUpload(storagePath);
-    validateUploadMetadata(upload.size, upload.contentType);
+    geminiFileName = assertGeminiFileName(input.fileName);
 
-    reservation = await dependencies.reserve(principal, requestId);
-    localPath = join(tmpdir(), `${requestId}-audio`);
-    await dependencies.downloadUpload(storagePath, localPath);
-    const durationSeconds = await dependencies.readDuration(localPath);
-    validateAudioDuration(durationSeconds);
+    if (typeof input.reservationId !== 'string') {
+      throw new ApiError(400, 'ANALYSIS_INPUT_INVALID', 'The analysis request is invalid.');
+    }
+    reservation = await dependencies.loadReservation(principal.uid, input.reservationId);
 
-    const generated = await dependencies.analyze(localPath, normalizeAudioType(upload.contentType));
+    const file = await dependencies.getUploadedFile(geminiFileName);
+    assertUploadMatchesReservation(file, reservation);
+
+    const generated = await dependencies.analyze(file, reservation.contentType);
     const report: SavedAnalysisReport = {
       ...generated,
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       fileName: input.originalName,
-      durationSeconds,
+      durationSeconds: input.durationSeconds,
     };
     await dependencies.complete(reservation, report);
     completed = true;
     const usage = await dependencies.usage(principal);
     return jsonResponse({ report, usage }, 200, requestId);
   } catch (error) {
-    return errorResponse(error, requestId);
+    const response = errorResponse(error, requestId);
+    if (error instanceof ApiError && error.status === 405) {
+      response.headers.set('allow', 'POST');
+    }
+    return response;
   } finally {
     if (reservation && !completed) {
       await dependencies.release(reservation).catch(() => undefined);
     }
-    if (localPath) {
-      await dependencies.removeLocalFile(localPath).catch(() => undefined);
-    }
-    if (storagePath) {
-      await dependencies.deleteUpload(storagePath).catch(() => undefined);
+    if (geminiFileName) {
+      await dependencies.deleteUploadedFile(geminiFileName).catch(() => undefined);
     }
   }
 }

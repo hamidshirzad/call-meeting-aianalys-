@@ -17,7 +17,6 @@
     "@google/genai": "^2.18.0",
     "firebase": "^12.1.0",
     "firebase-admin": "^14.3.0",
-    "music-metadata": "^11.15.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "stripe": "22.4.0"

@@ -1,6 +1,5 @@
 import { getApp, getApps, initializeApp, type FirebaseOptions } from 'firebase/app';
 import { getAuth, type Auth } from 'firebase/auth';
-import { getStorage, type FirebaseStorage } from 'firebase/storage';
 
 export function normalizeFirebaseEnvironmentValue(value: unknown): string | undefined {
   if (typeof value !== 'string') {
@@ -53,7 +52,6 @@ export const firebaseConfig: FirebaseOptions = {
   apiKey: normalizeFirebaseEnvironmentValue(import.meta.env.VITE_FIREBASE_API_KEY),
   authDomain: normalizeFirebaseAuthDomain(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN),
   projectId: normalizeFirebaseEnvironmentValue(import.meta.env.VITE_FIREBASE_PROJECT_ID),
-  storageBucket: normalizeFirebaseEnvironmentValue(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET),
   messagingSenderId: normalizeFirebaseEnvironmentValue(
     import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   ),
@@ -69,20 +67,13 @@ export const firebaseConfigurationError =
     ? `Firebase Authentication is not configured. Missing browser-safe settings: ${missingConfiguration.join(', ')}.`
     : null;
 
-interface FirebaseServices {
-  auth: Auth;
-  storage: FirebaseStorage;
-}
-
-function createServices(): FirebaseServices | null {
+function createAuth(): Auth | null {
   if (firebaseConfigurationError) {
     return null;
   }
 
   const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-  return { auth: getAuth(app), storage: getStorage(app) };
+  return getAuth(app);
 }
 
-const services = createServices();
-export const firebaseAuth = services?.auth ?? null;
-export const firebaseStorage = services?.storage ?? null;
+export const firebaseAuth = createAuth();

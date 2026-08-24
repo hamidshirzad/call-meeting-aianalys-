@@ -87,12 +87,14 @@ function report(id: string): SavedAnalysisReport {
   };
 }
 
+const upload = { geminiNonce: 'nonce', declaredSize: 1_024, contentType: 'audio/mpeg' };
+
 describe('transactional analysis usage', () => {
   it('allows only five concurrent Free reservations', async () => {
     const fake = createFirestore({ plan: 'free', subscriptionStatus: 'none' });
     const repository = new AnalysisRepository(fake.firestore, async () => undefined);
     const attempts = await Promise.allSettled(
-      Array.from({ length: 6 }, (_, index) => repository.reserve(principal, `free-${index}`)),
+      Array.from({ length: 6 }, (_, index) => repository.reserve(principal, `free-${index}`, upload)),
     );
     expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(5);
     expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(1);
@@ -107,7 +109,7 @@ describe('transactional analysis usage', () => {
     const fake = createFirestore({ plan: 'pro', subscriptionStatus: 'active' });
     const repository = new AnalysisRepository(fake.firestore, async () => undefined);
     const attempts = await Promise.allSettled(
-      Array.from({ length: 51 }, (_, index) => repository.reserve(principal, `pro-${index}`)),
+      Array.from({ length: 51 }, (_, index) => repository.reserve(principal, `pro-${index}`, upload)),
     );
     expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(50);
     expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(1);
@@ -116,14 +118,14 @@ describe('transactional analysis usage', () => {
   it('charges only completed reports and releases failed processing', async () => {
     const fake = createFirestore({ plan: 'free', subscriptionStatus: 'none' });
     const repository = new AnalysisRepository(fake.firestore, async () => undefined);
-    const failed = await repository.reserve(principal, 'failed-request');
+    const failed = await repository.reserve(principal, 'failed-request', upload);
     await repository.release(failed);
     expect(fake.records.get(`users/verified-uid/usage/${usagePeriod()}`)).toMatchObject({
       completed: 0,
       reserved: 0,
     });
 
-    const completed = await repository.reserve(principal, 'completed-request');
+    const completed = await repository.reserve(principal, 'completed-request', upload);
     const saved = report('7f6e6f6b-38d5-4a24-9541-90aa8d91ff21');
     await repository.complete(completed, saved);
     expect(fake.records.get(`users/verified-uid/usage/${usagePeriod()}`)).toMatchObject({
