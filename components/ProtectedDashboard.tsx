@@ -7,6 +7,7 @@ import {
   type AccountProfile,
 } from '../lib/billing-api';
 import AnalysisWorkspace from './AnalysisWorkspace';
+import BuildInfo from './BuildInfo';
 
 interface ProtectedDashboardProps {
   user: User;
@@ -87,6 +88,7 @@ export default function ProtectedDashboard({ user, onLogout }: ProtectedDashboar
             <p className="muted" style={{ margin: '12px 0 0' }}>
               Authenticated workspace
             </p>
+            <BuildInfo />
           </div>
           <button className="secondary-button" type="button" onClick={() => void onLogout()}>
             Sign out
@@ -187,7 +189,7 @@ export default function ProtectedDashboard({ user, onLogout }: ProtectedDashboar
             </p>
             <ul className="trust-list">
               <li>Webhook-controlled plan, status, and entitlement</li>
-              <li>Verified UID-scoped temporary audio uploads</li>
+              <li>Browser-to-Gemini uploads authorized per request, with no storage bucket</li>
               <li>Atomic Free and Pro usage enforcement</li>
               <li>Server-only Gemini and saved report history</li>
             </ul>

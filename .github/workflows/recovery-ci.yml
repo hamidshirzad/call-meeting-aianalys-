@@ -9,6 +9,20 @@ permissions:
   contents: read
 
 jobs:
+  # Diagnostic: the `check` job below has been failing in ~3 seconds with no
+  # runner assigned and no step output, which is not a code failure. This job
+  # uses no third-party actions at all. If it passes while `check` still fails,
+  # a restricted-actions policy is blocking actions/checkout and setup-node
+  # (Settings -> Actions -> General -> Actions permissions). If both fail the
+  # same way, the restriction is broader than this repository.
+  # Remove this job once the cause is confirmed.
+  runner-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "Runner reached. node=$(node --version) os=$(uname -sr)"
+
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15

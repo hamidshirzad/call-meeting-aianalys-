@@ -223,6 +223,31 @@ describe('analysis browser boundary', () => {
     });
   });
 
+  it('reports the preparing phase before any bytes move', async () => {
+    // The mint round-trip happens before the upload starts. Without this phase
+    // the user sits on a silent 0% and cannot tell the request is progressing.
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        uploadUrl: 'https://upload.example.test/s/1',
+        reservationId: 'reservation-1',
+      }))
+      .mockResolvedValueOnce(jsonResponse({ report: { id: 'r1' }, usage: { remaining: 4 } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const phases: string[] = [];
+    const file = new File(['audio'], 'call.mp3', { type: 'audio/mpeg' });
+    const promise = analyzeAudio(user, file, undefined, (phase) => phases.push(phase));
+
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
+    // Preparing must already have fired by the time the upload is created.
+    expect(phases).toEqual(['preparing', 'uploading']);
+
+    FakeXhr.instances[0].onload?.();
+    await promise;
+
+    expect(phases).toEqual(['preparing', 'uploading', 'analyzing']);
+  });
+
   it('never uploads when the server refuses to authorize the upload', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
       JSON.stringify({ error: { code: 'USAGE_LIMIT_REACHED', message: 'Limit reached.' } }),

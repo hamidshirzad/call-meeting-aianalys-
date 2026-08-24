@@ -205,6 +205,9 @@ interface UploadTicket {
   reservationId: string;
 }
 
+/** Where an in-flight analysis currently is, for user-facing progress. */
+export type UploadPhase = 'preparing' | 'uploading' | 'analyzing';
+
 /**
  * Uploads a call and returns its analysis.
  *
@@ -217,9 +220,13 @@ export async function analyzeAudio(
   user: User,
   file: File,
   onProgress?: (percentage: number) => void,
+  onPhase?: (phase: UploadPhase) => void,
 ): Promise<AnalysisResult> {
   const contentType = validateClientAudioFile(file);
 
+  // Authorizing the upload is a real server round-trip before any byte moves.
+  // Without this the user waits on a silent, apparently-stuck 0%.
+  onPhase?.('preparing');
   const ticket = await authenticatedJson<UploadTicket>(
     user,
     // Must match api/analysis-upload-url.ts: Vercel maps files to routes
@@ -229,8 +236,10 @@ export async function analyzeAudio(
     { size: file.size, contentType },
   );
 
+  onPhase?.('uploading');
   const fileName = await putAudioToUploadUrl(ticket.uploadUrl, file, contentType, onProgress);
 
+  onPhase?.('analyzing');
   return authenticatedJson<AnalysisResult>(user, '/api/analysis', 'POST', {
     reservationId: ticket.reservationId,
     fileName,

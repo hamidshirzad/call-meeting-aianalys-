@@ -12,7 +12,7 @@ interface AnalysisWorkspaceProps {
   user: User;
 }
 
-type AnalysisPhase = 'idle' | 'uploading' | 'analyzing';
+type AnalysisPhase = 'idle' | 'preparing' | 'uploading' | 'analyzing';
 
 export default function AnalysisWorkspace({ user }: AnalysisWorkspaceProps) {
   const [reports, setReports] = useState<SavedAnalysisReport[]>([]);
@@ -62,12 +62,14 @@ export default function AnalysisWorkspace({ user }: AnalysisWorkspaceProps) {
     if (!selectedFile || phase !== 'idle') return;
     setError(null);
     setUploadProgress(0);
-    setPhase('uploading');
+    setPhase('preparing');
     try {
-      const result = await analyzeAudio(user, selectedFile, (percentage) => {
-        setUploadProgress(percentage);
-        if (percentage >= 100) setPhase('analyzing');
-      });
+      const result = await analyzeAudio(
+        user,
+        selectedFile,
+        (percentage) => setUploadProgress(percentage),
+        (nextPhase) => setPhase(nextPhase),
+      );
       setReports((current) => [result.report, ...current.filter(({ id }) => id !== result.report.id)]);
       setUsage(result.usage);
       setSelectedFile(null);
@@ -128,7 +130,9 @@ export default function AnalysisWorkspace({ user }: AnalysisWorkspaceProps) {
           disabled={!selectedFile || busy || limitReached}
           onClick={() => void submit()}
         >
-          {phase === 'uploading'
+          {phase === 'preparing'
+            ? 'Preparing secure upload…'
+            : phase === 'uploading'
             ? `Uploading ${uploadProgress}%…`
             : phase === 'analyzing'
               ? 'Analyzing securely…'
@@ -140,8 +144,19 @@ export default function AnalysisWorkspace({ user }: AnalysisWorkspaceProps) {
 
       {busy ? (
         <div className="analysis-progress" role="status" aria-live="polite">
-          <progress max="100" value={phase === 'analyzing' ? 100 : uploadProgress} />
-          <span>{phase === 'analyzing' ? 'Creating transcript and coaching report…' : 'Uploading securely…'}</span>
+          <progress
+            max="100"
+            {...(phase === 'preparing'
+              ? {}
+              : { value: phase === 'analyzing' ? 100 : uploadProgress })}
+          />
+          <span>
+            {phase === 'preparing'
+              ? 'Authorizing this upload…'
+              : phase === 'analyzing'
+                ? 'Creating transcript and coaching report…'
+                : 'Uploading securely to the analysis provider…'}
+          </span>
         </div>
       ) : null}
       {error ? <div className="error-notice analysis-error" role="alert">{error}</div> : null}
