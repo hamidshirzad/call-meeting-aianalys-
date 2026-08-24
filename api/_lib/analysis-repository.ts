@@ -1,0 +1,267 @@
+import { FieldValue, type Firestore } from 'firebase-admin/firestore';
+import { ApiError } from './api-errors.js';
+import {
+  FREE_MONTHLY_ANALYSIS_LIMIT,
+  PRO_MONTHLY_ANALYSIS_LIMIT,
+  usagePeriod,
+} from './analysis-policy.js';
+import { isSubscriptionEntitled } from './entitlement-policy.js';
+import type { VerifiedPrincipal } from './firebase-auth.js';
+import {
+  UserProfileRepository,
+  type SubscriptionStatus,
+} from './user-profile-repository.js';
+import type { AnalysisUsageSummary, SavedAnalysisReport } from '../../types.js';
+
+export interface UsageReservation {
+  uid: string;
+  id: string;
+  period: string;
+  plan: 'free' | 'pro';
+  limit: number;
+}
+
+/**
+ * What the reservation remembers about the upload it authorized.
+ *
+ * `geminiNonce` never leaves the server. It is written into the Gemini file's
+ * displayName when the upload URL is minted, so matching it later proves the
+ * uploaded file is the one this reservation paid for.
+ */
+export interface ReservedUpload extends UsageReservation {
+  geminiNonce: string;
+  declaredSize: number;
+  contentType: string;
+}
+
+function nonNegativeInteger(value: unknown): number {
+  return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : 0;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+const supportedSubscriptionStatuses = new Set<SubscriptionStatus>([
+  'none', 'active', 'trialing', 'past_due', 'unpaid', 'canceled',
+  'incomplete', 'incomplete_expired', 'paused',
+]);
+
+function planAndLimit(profile: Record<string, unknown>) {
+  const status =
+    typeof profile.subscriptionStatus === 'string' &&
+    supportedSubscriptionStatuses.has(profile.subscriptionStatus as SubscriptionStatus)
+      ? profile.subscriptionStatus as SubscriptionStatus
+      : 'none';
+  const pro =
+    profile.plan === 'pro' &&
+    isSubscriptionEntitled(status, stringOrNull(profile.pastDueSince));
+  return pro
+    ? { plan: 'pro' as const, limit: PRO_MONTHLY_ANALYSIS_LIMIT }
+    : { plan: 'free' as const, limit: FREE_MONTHLY_ANALYSIS_LIMIT };
+}
+
+export class AnalysisRepository {
+  constructor(
+    private readonly firestore: Firestore,
+    private readonly ensureProfile: (principal: VerifiedPrincipal) => Promise<unknown> =
+      (principal) => new UserProfileRepository(firestore).getOrCreate(principal),
+  ) {}
+
+  async reserve(
+    principal: VerifiedPrincipal,
+    reservationId: string,
+    upload: { geminiNonce: string; declaredSize: number; contentType: string },
+  ): Promise<ReservedUpload> {
+    await this.ensureProfile(principal);
+    const period = usagePeriod();
+    const userReference = this.firestore.collection('users').doc(principal.uid);
+    const usageReference = userReference.collection('usage').doc(period);
+    const reservationReference = userReference.collection('analysisReservations').doc(reservationId);
+
+    return this.firestore.runTransaction(async (transaction) => {
+      const [profileSnapshot, usageSnapshot, reservationSnapshot] = await Promise.all([
+        transaction.get(userReference),
+        transaction.get(usageReference),
+        transaction.get(reservationReference),
+      ]);
+      if (!profileSnapshot.exists) throw new Error('The user profile does not exist.');
+      if (reservationSnapshot.exists) throw new Error('The usage reservation already exists.');
+
+      const { plan, limit } = planAndLimit(profileSnapshot.data() ?? {});
+      const usage = usageSnapshot.data() ?? {};
+      const completed = nonNegativeInteger(usage.completed);
+      const reserved = nonNegativeInteger(usage.reserved);
+      if (completed + reserved >= limit) {
+        throw new ApiError(
+          429,
+          'USAGE_LIMIT_REACHED',
+          `${plan === 'pro' ? 'Pro' : 'Free'} plan monthly analysis limit reached.`,
+        );
+      }
+
+      transaction.set(usageReference, {
+        period,
+        plan,
+        limit,
+        completed,
+        reserved: reserved + 1,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      transaction.create(reservationReference, {
+        period,
+        plan,
+        limit,
+        status: 'reserved',
+        geminiNonce: upload.geminiNonce,
+        declaredSize: upload.declaredSize,
+        contentType: upload.contentType,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      return { uid: principal.uid, id: reservationId, period, plan, limit, ...upload };
+    });
+  }
+
+  /**
+   * Loads a reservation for the analysis step.
+   *
+   * Scoped under the caller's own UID, so a client that passes someone else's
+   * reservation ID simply finds nothing. Only 'reserved' rows are returned,
+   * which is what stops a completed reservation being spent twice.
+   */
+  async loadReservation(uid: string, reservationId: string): Promise<ReservedUpload> {
+    if (!/^[a-zA-Z0-9-]{16,80}$/.test(reservationId)) {
+      throw new ApiError(400, 'ANALYSIS_INPUT_INVALID', 'The analysis request is invalid.');
+    }
+
+    const snapshot = await this.firestore
+      .collection('users')
+      .doc(uid)
+      .collection('analysisReservations')
+      .doc(reservationId)
+      .get();
+
+    const data = snapshot.data();
+    if (!snapshot.exists || !data || data.status !== 'reserved') {
+      throw new ApiError(
+        404,
+        'ANALYSIS_RESERVATION_INVALID',
+        'This upload is no longer awaiting analysis. Start a new analysis.',
+      );
+    }
+
+    return {
+      uid,
+      id: reservationId,
+      period: String(data.period),
+      plan: data.plan === 'pro' ? 'pro' : 'free',
+      limit: nonNegativeInteger(data.limit),
+      geminiNonce: String(data.geminiNonce ?? ''),
+      declaredSize: nonNegativeInteger(data.declaredSize),
+      contentType: String(data.contentType ?? ''),
+    };
+  }
+
+  async complete(reservation: UsageReservation, report: SavedAnalysisReport): Promise<void> {
+    const userReference = this.firestore.collection('users').doc(reservation.uid);
+    const usageReference = userReference.collection('usage').doc(reservation.period);
+    const reservationReference = userReference.collection('analysisReservations').doc(reservation.id);
+    const reportReference = userReference.collection('reports').doc(report.id);
+
+    await this.firestore.runTransaction(async (transaction) => {
+      const [usageSnapshot, reservationSnapshot] = await Promise.all([
+        transaction.get(usageReference),
+        transaction.get(reservationReference),
+      ]);
+      if (!reservationSnapshot.exists || reservationSnapshot.data()?.status !== 'reserved') {
+        throw new Error('The usage reservation is no longer active.');
+      }
+      const usage = usageSnapshot.data() ?? {};
+      transaction.create(reportReference, {
+        ...report,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      transaction.set(usageReference, {
+        period: reservation.period,
+        plan: reservation.plan,
+        limit: reservation.limit,
+        completed: nonNegativeInteger(usage.completed) + 1,
+        reserved: Math.max(0, nonNegativeInteger(usage.reserved) - 1),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      transaction.update(reservationReference, {
+        status: 'completed',
+        reportId: report.id,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  async release(reservation: UsageReservation): Promise<void> {
+    const userReference = this.firestore.collection('users').doc(reservation.uid);
+    const usageReference = userReference.collection('usage').doc(reservation.period);
+    const reservationReference = userReference.collection('analysisReservations').doc(reservation.id);
+
+    await this.firestore.runTransaction(async (transaction) => {
+      const [usageSnapshot, reservationSnapshot] = await Promise.all([
+        transaction.get(usageReference),
+        transaction.get(reservationReference),
+      ]);
+      if (!reservationSnapshot.exists || reservationSnapshot.data()?.status !== 'reserved') return;
+      const usage = usageSnapshot.data() ?? {};
+      transaction.set(usageReference, {
+        reserved: Math.max(0, nonNegativeInteger(usage.reserved) - 1),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      transaction.update(reservationReference, {
+        status: 'released',
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  async usage(principal: VerifiedPrincipal): Promise<AnalysisUsageSummary> {
+    await this.ensureProfile(principal);
+    const period = usagePeriod();
+    const userReference = this.firestore.collection('users').doc(principal.uid);
+    const [profileSnapshot, usageSnapshot] = await Promise.all([
+      userReference.get(),
+      userReference.collection('usage').doc(period).get(),
+    ]);
+    const { plan, limit } = planAndLimit(profileSnapshot.data() ?? {});
+    const usage = usageSnapshot.data() ?? {};
+    const completed = nonNegativeInteger(usage.completed);
+    const reserved = nonNegativeInteger(usage.reserved);
+    return {
+      period,
+      plan,
+      completed,
+      reserved,
+      limit,
+      remaining: Math.max(0, limit - completed - reserved),
+    };
+  }
+
+  async listReports(uid: string, maximum = 30): Promise<SavedAnalysisReport[]> {
+    const snapshot = await this.firestore
+      .collection('users')
+      .doc(uid)
+      .collection('reports')
+      .orderBy('timestamp', 'desc')
+      .limit(Math.max(1, Math.min(50, maximum)))
+      .get();
+
+    return snapshot.docs.map((document) => document.data() as SavedAnalysisReport);
+  }
+
+  async deleteReport(uid: string, reportId: string): Promise<void> {
+    if (!/^[a-zA-Z0-9-]{16,80}$/.test(reportId)) {
+      throw new ApiError(400, 'REPORT_ID_INVALID', 'The report ID is invalid.');
+    }
+    const reference = this.firestore.collection('users').doc(uid).collection('reports').doc(reportId);
+    const snapshot = await reference.get();
+    if (!snapshot.exists) throw new ApiError(404, 'REPORT_NOT_FOUND', 'The report was not found.');
+    await reference.delete();
+  }
+}

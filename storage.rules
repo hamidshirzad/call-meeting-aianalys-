@@ -1,0 +1,23 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    match /users/{uid}/uploads/{fileName} {
+      allow create: if isOwner(uid)
+        && request.resource.size > 0
+        && request.resource.size <= 50 * 1024 * 1024
+        && request.resource.contentType.matches(
+          'audio/(mpeg|mp3|mp4|m4a|x-m4a|wav|x-wav|aac|aiff|x-aiff|ogg|flac|webm)'
+        );
+      allow read, update, delete: if false;
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
