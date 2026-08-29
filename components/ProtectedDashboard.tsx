@@ -7,7 +7,6 @@ import {
   type AccountProfile,
 } from '../lib/billing-api';
 import AnalysisWorkspace from './AnalysisWorkspace';
-import BuildInfo from './BuildInfo';
 
 interface ProtectedDashboardProps {
   user: User;
@@ -25,6 +24,11 @@ function formatDate(value: string | null): string | null {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toLocaleDateString();
+}
+
+function subscriptionLabel(status: AccountProfile['subscriptionStatus']): string {
+  if (status === 'none') return 'No subscription';
+  return status.replaceAll('_', ' ');
 }
 
 export default function ProtectedDashboard({ user, onLogout }: ProtectedDashboardProps) {
@@ -85,10 +89,9 @@ export default function ProtectedDashboard({ user, onLogout }: ProtectedDashboar
               <span className="brand-mark" aria-hidden="true">4D</span>
               FourDoorAI Call Coach
             </div>
-            <p className="muted" style={{ margin: '12px 0 0' }}>
-              Authenticated workspace
+            <p className="dashboard-tagline">
+              Review calls, find what worked, and improve the next conversation.
             </p>
-            <BuildInfo />
           </div>
           <button className="secondary-button" type="button" onClick={() => void onLogout()}>
             Sign out
@@ -97,8 +100,8 @@ export default function ProtectedDashboard({ user, onLogout }: ProtectedDashboar
 
         {signal === 'processing' && !profile?.entitled ? (
           <div className="notice billing-banner" role="status">
-            Stripe returned successfully. Access is waiting for the verified webhook—this page does
-            not grant Pro from the redirect.
+            Your payment was received. We are confirming your Pro access; refresh your billing
+            status in a moment.
           </div>
         ) : null}
         {signal === 'canceled' ? (
@@ -119,7 +122,7 @@ export default function ProtectedDashboard({ user, onLogout }: ProtectedDashboar
                 <div className="billing-meta">
                   <span className={`status-pill ${profile.entitled ? 'is-active' : ''}`}>
                     <span className="status-dot" aria-hidden="true" />
-                    {profile.subscriptionStatus.replaceAll('_', ' ')}
+                    {subscriptionLabel(profile.subscriptionStatus)}
                   </span>
                   {periodEnd ? (
                     <span className="muted">
@@ -167,31 +170,31 @@ export default function ProtectedDashboard({ user, onLogout }: ProtectedDashboar
                 </div>
               </>
             ) : (
-              <p className="muted">The authoritative server profile is not available yet.</p>
+              <p className="muted">Your billing details are temporarily unavailable.</p>
             )}
           </article>
 
           <article className="dashboard-card">
-            <p className="eyebrow">Signed in as</p>
+            <p className="eyebrow">Account</p>
+            <h2>Your workspace</h2>
             <p className="user-email">{user.email ?? 'Verified Firebase user'}</p>
             <p className="muted">
-              Identity comes from Firebase Authentication. Browser storage cannot replace this
-              session or grant paid access.
+              Your reports and usage belong only to this signed-in account.
             </p>
           </article>
 
           <article className="dashboard-card feature-card">
-            <p className="eyebrow">Security checkpoint</p>
-            <h2>Milestone 4 trust boundary</h2>
+            <p className="eyebrow">What you receive</p>
+            <h2>Practical coaching after every call</h2>
             <p className="muted">
-              Stripe webhooks control entitlement. Authentication identifies the account but does
-              not grant Pro from the redirect.
+              Go beyond a transcript. Each completed analysis highlights the moments worth
+              repeating and the opportunities to handle differently next time.
             </p>
             <ul className="trust-list">
-              <li>Webhook-controlled plan, status, and entitlement</li>
-              <li>Browser-to-Gemini uploads authorized per request, with no storage bucket</li>
-              <li>Atomic Free and Pro usage enforcement</li>
-              <li>Server-only Gemini and saved report history</li>
+              <li>Concise call summary</li>
+              <li>Strengths and coaching opportunities</li>
+              <li>Speaker-by-speaker transcript</li>
+              <li>Private report history</li>
             </ul>
           </article>
         </section>
