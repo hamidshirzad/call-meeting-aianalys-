@@ -4,6 +4,7 @@ import { handleUploadRequest, type UploadHandlerDependencies } from '../api/uplo
 function dependencies(): UploadHandlerDependencies {
   return {
     verifyIdToken: vi.fn().mockResolvedValue({ uid: 'verified-uid', email: 'owner@example.com' }),
+    remainingAnalyses: vi.fn().mockResolvedValue(5),
     authorize: vi.fn().mockResolvedValue({
       storagePath: 'users/verified-uid/uploads/random-call.mp3',
       token: 'signed-upload-token',
@@ -52,6 +53,38 @@ describe('POST /api/uploads', () => {
     expect(deps.authorize).toHaveBeenCalledWith(
       expect.objectContaining({ uid: 'verified-uid' }), 'Discovery-call.mp3',
     );
+  });
+
+  it('refuses to sign once the monthly limit is reached', async () => {
+    // Quota is only reserved in /api/analysis. Without a gate here a user at
+    // their limit can mint unlimited tokens and fill the bucket with objects
+    // that can never be analyzed, and nothing sweeps them.
+    const deps = dependencies();
+    vi.mocked(deps.remainingAnalyses).mockResolvedValue(0);
+
+    const response = await handleUploadRequest(request({
+      fileName: 'call.mp3', contentType: 'audio/mpeg', size: 1_024,
+    }), deps);
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'USAGE_LIMIT_REACHED' },
+    });
+    expect(deps.authorize).not.toHaveBeenCalled();
+  });
+
+  it('checks the limit only after rejecting invalid input', async () => {
+    // A 415 for the wrong file type is more useful than a 429, and the quota
+    // read costs a Firestore round-trip.
+    const deps = dependencies();
+    vi.mocked(deps.remainingAnalyses).mockResolvedValue(0);
+
+    const response = await handleUploadRequest(request({
+      fileName: 'notes.txt', contentType: 'text/plain', size: 100,
+    }), deps);
+
+    expect(response.status).toBe(415);
+    expect(deps.remainingAnalyses).not.toHaveBeenCalled();
   });
 
   it('rejects unsupported and oversized files before signing', async () => {

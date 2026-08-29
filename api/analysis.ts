@@ -50,6 +50,24 @@ export interface AnalysisHandlerDependencies {
   removeLocalFile(path: string): Promise<void>;
 }
 
+/**
+ * Reads audio duration, or null when the container cannot be identified.
+ *
+ * Duration is optional display metadata — validateAudioDuration(null) is a
+ * no-op. The temp file is written without an extension, so music-metadata
+ * sniffs content and throws on anything it cannot parse; letting that propagate
+ * would fail an analysis Gemini could have handled perfectly well.
+ */
+export async function readAudioDurationSeconds(path: string): Promise<number | null> {
+  try {
+    const metadata = await parseFile(path, { duration: true });
+    const duration = metadata.format.duration;
+    return typeof duration === 'number' && Number.isFinite(duration) ? duration : null;
+  } catch {
+    return null;
+  }
+}
+
 function repository() {
   return new AnalysisRepository(getFirebaseAdminServices().firestore);
 }
@@ -60,11 +78,7 @@ const defaultDependencies: AnalysisHandlerDependencies = {
   inspectUpload: inspectTemporaryUpload,
   downloadUpload: downloadTemporaryUpload,
   deleteUpload: deleteTemporaryUpload,
-  readDuration: async (path) => {
-    const metadata = await parseFile(path, { duration: true });
-    const duration = metadata.format.duration;
-    return typeof duration === 'number' && Number.isFinite(duration) ? duration : null;
-  },
+  readDuration: readAudioDurationSeconds,
   reserve: (principal, reservationId) => repository().reserve(principal, reservationId),
   analyze: analyzeAudioWithGemini,
   complete: (reservation, report) => repository().complete(reservation, report),

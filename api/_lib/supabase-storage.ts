@@ -42,7 +42,11 @@ export function safeTemporaryFileName(value: unknown): string {
   const normalized = value
     .normalize('NFKD')
     .replace(/[^a-zA-Z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    // Collapse dot runs. assertOwnedUploadPath rejects any name containing
+    // '..', so leaving one here would mint a path the server's own validator
+    // refuses — the upload succeeds and analysis then 403s.
+    .replace(/\.{2,}/g, '.')
+    .replace(/^[-.]+|[-.]+$/g, '')
     .slice(-100);
   return normalized || 'call-audio';
 }

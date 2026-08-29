@@ -5,6 +5,7 @@ import {
   jsonResponse,
 } from './_lib/api-errors.js';
 import { normalizeAudioType, validateUploadMetadata } from './_lib/analysis-policy.js';
+import { AnalysisRepository } from './_lib/analysis-repository.js';
 import {
   authenticateRequest,
   type VerifiedPrincipal,
@@ -26,6 +27,7 @@ interface UploadRequestInput {
 
 export interface UploadHandlerDependencies {
   verifyIdToken: VerifyIdToken;
+  remainingAnalyses(principal: VerifiedPrincipal): Promise<number>;
   authorize(
     principal: VerifiedPrincipal,
     fileName: string,
@@ -35,6 +37,8 @@ export interface UploadHandlerDependencies {
 const defaultDependencies: UploadHandlerDependencies = {
   verifyIdToken: (token, checkRevoked) =>
     getFirebaseAdminServices().auth.verifyIdToken(token, checkRevoked),
+  remainingAnalyses: async (principal) =>
+    (await new AnalysisRepository(getFirebaseAdminServices().firestore).usage(principal)).remaining,
   authorize: (principal, fileName) =>
     createTemporaryUploadAuthorization(principal.uid, fileName),
 };
@@ -83,6 +87,20 @@ export async function handleUploadRequest(
     }
     const principal = await authenticateRequest(request, dependencies.verifyIdToken);
     const input = await readInput(request);
+
+    // Refuse before minting. Quota is only reserved in /api/analysis, so without
+    // this a user at their limit can mint unlimited tokens and push unlimited
+    // bytes into the bucket for uploads that can never be analyzed. A read-only
+    // check rather than a reservation: reserving here is what stranded quota on
+    // abandoned uploads previously.
+    if (await dependencies.remainingAnalyses(principal) <= 0) {
+      throw new ApiError(
+        429,
+        'USAGE_LIMIT_REACHED',
+        'Monthly analysis limit reached. Upgrade or wait for the next period.',
+      );
+    }
+
     const authorization = await dependencies.authorize(principal, input.fileName);
     return jsonResponse({ ...authorization, contentType: input.contentType }, 200, requestId);
   } catch (error) {

@@ -72,12 +72,10 @@ export class AnalysisRepository {
       .map((document) => document.ref);
     if (legacyReferences.length === 0) return;
 
-    const usageReference = userReference.collection('usage').doc(usagePeriod());
     await this.firestore.runTransaction(async (transaction) => {
-      const [usageSnapshot, ...reservationSnapshots] = await Promise.all([
-        transaction.get(usageReference),
-        ...legacyReferences.map((reference) => transaction.get(reference)),
-      ]);
+      const reservationSnapshots = await Promise.all(
+        legacyReferences.map((reference) => transaction.get(reference)),
+      );
       const active = reservationSnapshots.filter((reservationSnapshot) =>
         reservationSnapshot.exists &&
         reservationSnapshot.data()?.status === 'reserved' &&
@@ -85,11 +83,32 @@ export class AnalysisRepository {
       );
       if (active.length === 0) return;
 
-      const usage = usageSnapshot.data() ?? {};
-      transaction.set(usageReference, {
-        reserved: Math.max(0, nonNegativeInteger(usage.reserved) - active.length),
-        updatedAt: FieldValue.serverTimestamp(),
-      }, { merge: true });
+      // Release against each reservation's own period. A stranded reservation
+      // from a previous month must not decrement this month's counter: that
+      // leaves the old month overcounted and hands the user a free slot now.
+      const countByPeriod = new Map<string, number>();
+      for (const reservationSnapshot of active) {
+        const period = typeof reservationSnapshot.data()?.period === 'string'
+          ? reservationSnapshot.data()!.period as string
+          : usagePeriod();
+        countByPeriod.set(period, (countByPeriod.get(period) ?? 0) + 1);
+      }
+
+      const usageEntries = await Promise.all(
+        [...countByPeriod].map(async ([period, count]) => {
+          const reference = userReference.collection('usage').doc(period);
+          return { reference, count, snapshot: await transaction.get(reference) };
+        }),
+      );
+
+      for (const { reference, count, snapshot: usageSnapshot } of usageEntries) {
+        const usage = usageSnapshot.data() ?? {};
+        transaction.set(reference, {
+          reserved: Math.max(0, nonNegativeInteger(usage.reserved) - count),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
       for (const reservationSnapshot of active) {
         transaction.update(reservationSnapshot.ref, {
           status: 'released',

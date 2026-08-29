@@ -178,4 +178,33 @@ describe('transactional analysis usage', () => {
       status: 'reserved',
     });
   });
+  it('releases a stranded reservation against its own period, not the current one', async () => {
+    // A legacy reservation from a previous month must not decrement this
+    // month's counter: that would leave the old month permanently overcounted
+    // while handing the user an extra slot now.
+    const fake = createFirestore({ plan: 'pro', subscriptionStatus: 'active' });
+    const period = usagePeriod();
+    const priorPeriod = '2000-01';
+
+    fake.records.set(`users/verified-uid/usage/${period}`, {
+      completed: 0, reserved: 1, limit: 50,
+    });
+    fake.records.set(`users/verified-uid/usage/${priorPeriod}`, {
+      completed: 0, reserved: 1, limit: 50,
+    });
+    fake.records.set('users/verified-uid/analysisReservations/stranded', {
+      status: 'reserved', geminiNonce: 'old-secret', period: priorPeriod,
+    });
+    const repository = new AnalysisRepository(fake.firestore, async () => undefined);
+
+    const usage = await repository.usage(principal);
+
+    // The old month is corrected...
+    expect(fake.records.get(`users/verified-uid/usage/${priorPeriod}`))
+      .toMatchObject({ reserved: 0 });
+    // ...and this month is untouched, so its own in-flight work still counts.
+    expect(usage).toMatchObject({ reserved: 1 });
+    expect(fake.records.get('users/verified-uid/analysisReservations/stranded'))
+      .toMatchObject({ status: 'released' });
+  });
 });

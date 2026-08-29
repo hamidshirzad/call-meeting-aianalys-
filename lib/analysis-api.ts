@@ -116,26 +116,6 @@ async function reportUploadFailure(
   }
 }
 
-export function readAudioDuration(file: File): Promise<number | null> {
-  return new Promise((resolve) => {
-    try {
-      const url = URL.createObjectURL(file);
-      const audio = new Audio();
-      const finish = (value: number | null) => {
-        URL.revokeObjectURL(url);
-        resolve(value);
-      };
-      audio.preload = 'metadata';
-      audio.onloadedmetadata = () =>
-        finish(Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : null);
-      audio.onerror = () => finish(null);
-      audio.src = url;
-    } catch {
-      resolve(null);
-    }
-  });
-}
-
 async function authenticatedJson<T>(
   user: User,
   path: string,
@@ -173,14 +153,18 @@ export async function uploadAudio(
   user: User,
   file: File,
   onProgress?: (percentage: number) => void,
+  onPhase?: (phase: UploadPhase) => void,
 ): Promise<string> {
   const contentType = validateClientAudioFile(file);
+  // Authorizing the upload is a real server round-trip before any byte moves.
+  // Reporting 'uploading' before it returns shows a stuck 0%.
   const authorization = await authenticatedJson<UploadAuthorization>(
     user,
     '/api/uploads',
     'POST',
     { fileName: file.name, contentType, size: file.size },
   );
+  onPhase?.('uploading');
 
   await new Promise<void>((resolve, reject) => {
     let lastTransferred = 0;
@@ -260,11 +244,8 @@ export async function analyzeAudio(
   onPhase?: (phase: UploadPhase) => void,
 ): Promise<AnalysisResult> {
   onPhase?.('preparing');
-  const durationPromise = readAudioDuration(file);
-  onPhase?.('uploading');
-  const storagePath = await uploadAudio(user, file, onProgress);
+  const storagePath = await uploadAudio(user, file, onProgress, onPhase);
   onPhase?.('analyzing');
-  await durationPromise;
   return authenticatedJson<AnalysisResult>(user, '/api/analysis', 'POST', {
     storagePath,
     originalName: file.name,
