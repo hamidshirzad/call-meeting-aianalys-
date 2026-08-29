@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   GEMINI_REQUEST_FEATURES,
+  geminiGenerationRetryDelayMs,
   geminiProviderReason,
   geminiProviderStatus,
   parseGeminiReport,
@@ -52,6 +53,14 @@ describe('Gemini report boundary', () => {
     expect(geminiProviderStatus({ status: '503' })).toBe(503);
     expect(geminiProviderStatus({ status: 200 })).toBeNull();
     expect(geminiProviderStatus(new Error('network failure'))).toBeNull();
+  });
+
+  it('never retries quota failures and bounds transient generation retries to one', () => {
+    expect(geminiGenerationRetryDelayMs(429, 0)).toBeNull();
+    expect(geminiGenerationRetryDelayMs(500, 0)).toBe(1_500);
+    expect(geminiGenerationRetryDelayMs(503, 0)).toBe(1_500);
+    expect(geminiGenerationRetryDelayMs(504, 1)).toBeNull();
+    expect(geminiGenerationRetryDelayMs(null, 0)).toBeNull();
   });
 
   it('reduces provider messages to fixed privacy-safe failure reasons', () => {
