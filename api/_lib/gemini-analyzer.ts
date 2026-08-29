@@ -68,7 +68,7 @@ export type GeminiAnalysisStage =
  * booleans, never provider data or user content.
  */
 export const GEMINI_REQUEST_FEATURES = Object.freeze({
-  background: true,
+  background: false,
   store: true,
   structuredOutput: true,
 });
@@ -406,7 +406,9 @@ export async function startAudioAnalysisWithGemini(
         schema: reportSchema,
       },
       generation_config: { max_output_tokens: 16_000 },
-      background: GEMINI_REQUEST_FEATURES.background,
+      // Controlled Preview A/B: synchronous creation avoids the provider's
+      // bare HTTP 400 for background audio interactions while keeping the
+      // interaction stored for the existing status/recovery endpoint.
       store: GEMINI_REQUEST_FEATURES.store,
     }, { timeout: GEMINI_GENERATION_TIMEOUT_MS, maxRetries: 1 });
     if (!interaction.id || !geminiFileName) throw new Error('Gemini did not create an analysis job.');
