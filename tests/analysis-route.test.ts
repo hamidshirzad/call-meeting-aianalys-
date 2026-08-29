@@ -15,13 +15,11 @@ function dependencies(): AnalysisHandlerDependencies {
     deleteUpload: vi.fn().mockResolvedValue(undefined),
     readDuration: vi.fn().mockResolvedValue(120),
     reserve: vi.fn().mockResolvedValue(reservation),
-    analyze: vi.fn().mockResolvedValue({
-      diarizedTranscript: [{ speaker: 'Agent', text: 'Hello' }],
-      sentimentData: [{ segmentIndex: 0, score: 0.5 }],
-      coachingCard: { strengths: ['Clear'], opportunities: ['Ask more'] },
-      summary: 'A useful call.',
+    startAnalysis: vi.fn().mockResolvedValue({
+      interactionId: 'interaction-123456', geminiFileName: 'files/audio-123456',
     }),
-    complete: vi.fn().mockResolvedValue(undefined),
+    createJob: vi.fn().mockResolvedValue(undefined),
+    deleteGeminiFile: vi.fn().mockResolvedValue(undefined),
     release: vi.fn().mockResolvedValue(undefined),
     usage: vi.fn().mockResolvedValue({
       period: '2026-08', plan: 'free', completed: 1, reserved: 0, limit: 5, remaining: 4,
@@ -59,17 +57,19 @@ describe('POST /api/analysis', () => {
     expect(deps.inspectUpload).not.toHaveBeenCalled();
   });
 
-  it('charges only after saving and deletes every temporary copy', async () => {
+  it('hands a background job off without charging and deletes uploaded copies', async () => {
     const deps = dependencies();
     const response = await handleAnalysisRequest(request({
       storagePath: 'users/verified-uid/uploads/call.mp3', originalName: 'call.mp3',
     }), deps);
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
     await expect(response.json()).resolves.toMatchObject({
-      report: { summary: 'A useful call.', durationSeconds: 120 },
-      usage: { completed: 1, remaining: 4 },
+      status: 'processing',
+      usage: { reserved: 0 },
     });
-    expect(deps.complete).toHaveBeenCalledOnce();
+    expect(deps.createJob).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 'verified-uid', status: 'processing', originalName: 'call.mp3',
+    }));
     expect(deps.release).not.toHaveBeenCalled();
     expect(deps.removeLocalFile).toHaveBeenCalledOnce();
     expect(deps.deleteUpload).toHaveBeenCalledWith('users/verified-uid/uploads/call.mp3');
@@ -77,7 +77,7 @@ describe('POST /api/analysis', () => {
 
   it('releases quota and deletes audio when AI processing fails', async () => {
     const deps = dependencies();
-    vi.mocked(deps.analyze).mockRejectedValue(new Error('provider detail'));
+    vi.mocked(deps.startAnalysis).mockRejectedValue(new Error('provider detail'));
     const response = await handleAnalysisRequest(request({
       storagePath: 'users/verified-uid/uploads/call.mp3',
     }), deps);
@@ -89,9 +89,21 @@ describe('POST /api/analysis', () => {
     expect(deps.deleteUpload).toHaveBeenCalledOnce();
   });
 
+  it('cleans up the Gemini file when the job record cannot be saved', async () => {
+    const deps = dependencies();
+    vi.mocked(deps.createJob).mockRejectedValue(new Error('firestore unavailable'));
+    const response = await handleAnalysisRequest(request({
+      storagePath: 'users/verified-uid/uploads/call.mp3',
+    }), deps);
+    expect(response.status).toBe(500);
+    expect(deps.release).toHaveBeenCalledWith(reservation);
+    expect(deps.deleteGeminiFile).toHaveBeenCalledWith('files/audio-123456');
+    expect(deps.deleteUpload).toHaveBeenCalledOnce();
+  });
+
   it('returns a retryable safe response when Gemini rate-limits an upload', async () => {
     const deps = dependencies();
-    vi.mocked(deps.analyze).mockRejectedValue({
+    vi.mocked(deps.startAnalysis).mockRejectedValue({
       name: 'ApiError', status: 429, message: 'private Google response',
     });
     const response = await handleAnalysisRequest(request({

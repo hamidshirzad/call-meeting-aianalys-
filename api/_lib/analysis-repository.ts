@@ -21,7 +21,18 @@ export interface UsageReservation {
   limit: number;
 }
 
-const STALE_RESERVATION_AGE_MS = 6 * 60 * 1000;
+export interface AnalysisJob {
+  id: string;
+  uid: string;
+  status: 'processing' | 'completed' | 'failed';
+  interactionId: string;
+  geminiFileName: string;
+  originalName: string;
+  durationSeconds: number | null;
+  reservation: UsageReservation;
+}
+
+const STALE_RESERVATION_AGE_MS = 15 * 60 * 1000;
 
 function timestampMillis(value: unknown): number | null {
   if (value instanceof Date) return value.getTime();
@@ -282,6 +293,49 @@ export class AnalysisRepository {
         updatedAt: FieldValue.serverTimestamp(),
       });
     });
+  }
+
+  async createJob(job: AnalysisJob): Promise<void> {
+    const reference = this.firestore
+      .collection('users').doc(job.uid)
+      .collection('analysisJobs').doc(job.id);
+    await this.firestore.runTransaction(async (transaction) => {
+      const existing = await transaction.get(reference);
+      if (existing.exists) throw new Error('The analysis job already exists.');
+      transaction.create(reference, {
+        ...job,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  async getJob(uid: string, jobId: string): Promise<AnalysisJob | null> {
+    if (!/^[a-zA-Z0-9-]{16,80}$/.test(jobId)) return null;
+    const snapshot = await this.firestore
+      .collection('users').doc(uid)
+      .collection('analysisJobs').doc(jobId)
+      .get();
+    return snapshot.exists ? snapshot.data() as AnalysisJob : null;
+  }
+
+  async updateJobStatus(
+    uid: string,
+    jobId: string,
+    status: AnalysisJob['status'],
+  ): Promise<void> {
+    await this.firestore
+      .collection('users').doc(uid)
+      .collection('analysisJobs').doc(jobId)
+      .set({ status, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  }
+
+  async getReport(uid: string, reportId: string): Promise<SavedAnalysisReport | null> {
+    const snapshot = await this.firestore
+      .collection('users').doc(uid)
+      .collection('reports').doc(reportId)
+      .get();
+    return snapshot.exists ? snapshot.data() as SavedAnalysisReport : null;
   }
 
   async release(reservation: UsageReservation): Promise<void> {

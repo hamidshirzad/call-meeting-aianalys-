@@ -54,6 +54,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('analysis workspace', () => {
@@ -120,5 +121,70 @@ describe('analysis workspace', () => {
     mocks.fetchReports.mockResolvedValue({ reports: [], usage: { ...usage, remaining: 0, completed: 5 } });
     render(<AnalysisWorkspace user={user} />);
     expect(await screen.findByRole('button', { name: 'Monthly limit reached' })).toBeDisabled();
+  });
+
+  it('requires consent and turns an in-person microphone recording into an analyzable file', async () => {
+    const stopTrack = vi.fn();
+    const stream = { getTracks: () => [{ stop: stopTrack }] } as unknown as MediaStream;
+    const getUserMedia = vi.fn().mockResolvedValue(stream);
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+
+    class MockMediaRecorder {
+      static isTypeSupported(type: string) {
+        return type === 'audio/mp4';
+      }
+
+      state: RecordingState = 'inactive';
+      mimeType: string;
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onstop: (() => void) | null = null;
+
+      constructor(_stream: MediaStream, options?: MediaRecorderOptions) {
+        this.mimeType = options?.mimeType ?? 'audio/mp4';
+      }
+
+      start() {
+        this.state = 'recording';
+      }
+
+      pause() {
+        this.state = 'paused';
+      }
+
+      resume() {
+        this.state = 'recording';
+      }
+
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob(['recorded audio'], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    vi.stubGlobal('MediaRecorder', MockMediaRecorder);
+
+    render(<AnalysisWorkspace user={user} />);
+    await screen.findByText('5 remaining');
+    fireEvent.click(screen.getByRole('button', { name: 'Record meeting' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start recording' }));
+    expect(await screen.findByText('Confirm that everyone has agreed before recording.'))
+      .toBeInTheDocument();
+    expect(getUserMedia).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByLabelText('I confirm everyone has agreed to be recorded and analyzed.'));
+    fireEvent.click(screen.getByRole('button', { name: 'Start recording' }));
+    expect(await screen.findByRole('button', { name: 'Stop recording' })).toBeInTheDocument();
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }));
+    expect(await screen.findByText(/Ready: meeting-.*\.m4a/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Analyze call' })).toBeEnabled();
+    expect(stopTrack).toHaveBeenCalled();
   });
 });

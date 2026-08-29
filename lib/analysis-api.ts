@@ -33,6 +33,19 @@ interface UploadAuthorization {
   contentType: string;
 }
 
+interface AnalysisJobStart {
+  jobId: string;
+  status: 'processing';
+  usage: AnalysisUsageSummary;
+}
+
+type AnalysisJobStatus =
+  | { jobId: string; status: 'processing' }
+  | { status: 'completed'; report: SavedAnalysisReport; usage: AnalysisUsageSummary };
+
+const ANALYSIS_POLL_INTERVAL_MS = 2_000;
+const ANALYSIS_POLL_ATTEMPTS = 150;
+
 export class AnalysisApiError extends Error {
   constructor(
     message: string,
@@ -274,10 +287,31 @@ export async function analyzeAudio(
   onPhase?.('preparing');
   const storagePath = await uploadAudio(user, file, onProgress, onPhase);
   onPhase?.('analyzing');
-  return authenticatedJson<AnalysisResult>(user, '/api/analysis', 'POST', {
+  const started = await authenticatedJson<AnalysisJobStart>(user, '/api/analysis', 'POST', {
     storagePath,
     originalName: file.name,
   });
+  for (let attempt = 0; attempt < ANALYSIS_POLL_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, ANALYSIS_POLL_INTERVAL_MS));
+    }
+    try {
+      const result = await authenticatedJson<AnalysisJobStatus>(
+        user,
+        `/api/analysis-status?jobId=${encodeURIComponent(started.jobId)}`,
+        'GET',
+      );
+      if (result.status === 'completed') return { report: result.report, usage: result.usage };
+    } catch (error) {
+      // A short mobile-network interruption should not lose a server-side job.
+      // Provider/API errors are authoritative and must surface immediately.
+      if (!(error instanceof TypeError)) throw error;
+    }
+  }
+  throw new AnalysisApiError(
+    'The report is still processing. Refresh report history in a moment.',
+    'ANALYSIS_STILL_PROCESSING',
+  );
 }
 
 export async function fetchReports(user: User): Promise<ReportsResult> {

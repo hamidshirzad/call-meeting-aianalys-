@@ -61,7 +61,7 @@ export type GeminiAnalysisStage =
   | 'gemini_generation_completed';
 
 const GEMINI_UPLOAD_TIMEOUT_MS = 60_000;
-const GEMINI_GENERATION_TIMEOUT_MS = 90_000;
+const GEMINI_GENERATION_TIMEOUT_MS = 30_000;
 const GEMINI_UPLOAD_RETRY_DELAYS_MS = [1_500, 4_000] as const;
 
 export function geminiProviderStatus(error: unknown): number | null {
@@ -153,6 +153,16 @@ export function parseGeminiReport(value: string): GeneratedReport {
   };
 }
 
+export interface StartedGeminiAnalysis {
+  interactionId: string;
+  geminiFileName: string;
+}
+
+export type GeminiJobResult =
+  | { status: 'processing' }
+  | { status: 'completed'; report: GeneratedReport }
+  | { status: 'failed' };
+
 async function waitForActiveFile(
   client: GoogleGenAI,
   file: { name?: string; state?: FileState; uri?: string; mimeType?: string },
@@ -169,11 +179,11 @@ async function waitForActiveFile(
   }
   return current;
 }
-export async function analyzeAudioWithGemini(
+export async function startAudioAnalysisWithGemini(
   filePath: string,
   mimeType: string,
   onStage?: (stage: GeminiAnalysisStage) => void,
-): Promise<GeneratedReport> {
+): Promise<StartedGeminiAnalysis> {
   const environment = loadGeminiEnvironment();
   const client = new GoogleGenAI({ apiKey: environment.apiKey });
   let geminiFileName: string | undefined;
@@ -198,16 +208,35 @@ export async function analyzeAudioWithGemini(
         schema: reportSchema,
       },
       generation_config: { max_output_tokens: 16_000 },
+      background: true,
+      store: true,
     }, { timeout: GEMINI_GENERATION_TIMEOUT_MS, maxRetries: 1 });
-    onStage?.('gemini_generation_completed');
-
-    if (!interaction.output_text) {
-      throw new Error('Gemini returned no analysis.');
-    }
-    return parseGeminiReport(interaction.output_text);
-  } finally {
-    if (geminiFileName) {
-      await client.files.delete({ name: geminiFileName }).catch(() => undefined);
-    }
+    if (!interaction.id || !geminiFileName) throw new Error('Gemini did not create an analysis job.');
+    return { interactionId: interaction.id, geminiFileName };
+  } catch (error) {
+    if (geminiFileName) await client.files.delete({ name: geminiFileName }).catch(() => undefined);
+    throw error;
   }
+}
+
+export async function getGeminiAnalysis(interactionId: string): Promise<GeminiJobResult> {
+  const environment = loadGeminiEnvironment();
+  const client = new GoogleGenAI({ apiKey: environment.apiKey });
+  const interaction = await client.interactions.get(interactionId, null, {
+    timeout: GEMINI_GENERATION_TIMEOUT_MS,
+    maxRetries: 1,
+  });
+  if (interaction.status === 'queued' || interaction.status === 'in_progress') {
+    return { status: 'processing' };
+  }
+  if (interaction.status !== 'completed' || !interaction.output_text) {
+    return { status: 'failed' };
+  }
+  return { status: 'completed', report: parseGeminiReport(interaction.output_text) };
+}
+
+export async function deleteGeminiAnalysisFile(geminiFileName: string): Promise<void> {
+  const environment = loadGeminiEnvironment();
+  const client = new GoogleGenAI({ apiKey: environment.apiKey });
+  await client.files.delete({ name: geminiFileName }).catch(() => undefined);
 }

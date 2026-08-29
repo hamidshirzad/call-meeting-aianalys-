@@ -404,7 +404,104 @@ h2 {
 .analysis-controls {
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.analysis-mode-tabs {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.analysis-mode-tabs button {
+  min-height: 46px;
+  border: 0;
+  background: #0f172a;
+  color: #94a3b8;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.analysis-mode-tabs button + button {
+  border-left: 1px solid #334155;
+}
+
+.analysis-mode-tabs button.active {
+  background: rgba(99, 102, 241, 0.22);
+  color: #c7d2fe;
+}
+
+.analysis-mode-tabs button:focus-visible,
+.recording-actions button:focus-visible {
+  outline: 3px solid rgba(129, 140, 248, 0.5);
+  outline-offset: -3px;
+}
+
+.recording-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  padding: 16px;
+  background: rgba(2, 6, 23, 0.35);
+}
+
+.consent-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #cbd5e1;
+  line-height: 1.45;
+}
+
+.consent-check input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  accent-color: #6366f1;
+}
+
+.recording-status,
+.recording-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.recording-status {
+  min-height: 36px;
+  color: #cbd5e1;
+}
+
+.record-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #64748b;
+}
+
+.record-dot.active {
+  background: #ef4444;
+  box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.14);
+}
+
+.recording-actions button {
+  flex: 1 1 0;
+}
+
+.recording-help,
+.recorded-file {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.recorded-file {
+  overflow-wrap: anywhere;
+  color: #a7f3d0;
+  font-weight: 700;
 }
 
 .file-picker {
@@ -584,6 +681,11 @@ h2 {
   .analysis-controls,
   .coaching-grid {
     grid-template-columns: 1fr;
+  }
+
+  .recording-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .usage-row,

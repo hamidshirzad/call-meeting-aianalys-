@@ -9,7 +9,11 @@ import {
   validateAudioDuration,
   validateUploadMetadata,
 } from './_lib/analysis-policy.js';
-import { AnalysisRepository, type UsageReservation } from './_lib/analysis-repository.js';
+import {
+  AnalysisRepository,
+  type AnalysisJob,
+  type UsageReservation,
+} from './_lib/analysis-repository.js';
 import {
   authenticateRequest,
   type VerifiedPrincipal,
@@ -17,7 +21,8 @@ import {
 } from './_lib/firebase-auth.js';
 import { getFirebaseAdminServices } from './_lib/firebase-admin.js';
 import {
-  analyzeAudioWithGemini,
+  deleteGeminiAnalysisFile,
+  startAudioAnalysisWithGemini,
   geminiProviderStatus,
   type GeminiAnalysisStage,
 } from './_lib/gemini-analyzer.js';
@@ -27,18 +32,12 @@ import {
   downloadTemporaryUpload,
   inspectTemporaryUpload,
 } from './_lib/supabase-storage.js';
-import type {
-  AnalysisUsageSummary,
-  SavedAnalysisReport,
-  SalesCallAnalysisReport,
-} from '../types.js';
+import type { AnalysisUsageSummary } from '../types.js';
 
 export interface UploadMetadata {
   size: number;
   contentType: string;
 }
-
-type GeneratedReport = Omit<SalesCallAnalysisReport, 'id' | 'timestamp'>;
 
 export interface AnalysisHandlerDependencies {
   verifyIdToken: VerifyIdToken;
@@ -47,12 +46,13 @@ export interface AnalysisHandlerDependencies {
   deleteUpload(path: string): Promise<void>;
   readDuration(path: string): Promise<number | null>;
   reserve(principal: VerifiedPrincipal, reservationId: string): Promise<UsageReservation>;
-  analyze(
+  startAnalysis(
     path: string,
     mimeType: string,
     onStage?: (stage: GeminiAnalysisStage) => void,
-  ): Promise<GeneratedReport>;
-  complete(reservation: UsageReservation, report: SavedAnalysisReport): Promise<void>;
+  ): Promise<{ interactionId: string; geminiFileName: string }>;
+  createJob(job: AnalysisJob): Promise<void>;
+  deleteGeminiFile(name: string): Promise<void>;
   release(reservation: UsageReservation): Promise<void>;
   usage(principal: VerifiedPrincipal): Promise<AnalysisUsageSummary>;
   removeLocalFile(path: string): Promise<void>;
@@ -88,8 +88,9 @@ const defaultDependencies: AnalysisHandlerDependencies = {
   deleteUpload: deleteTemporaryUpload,
   readDuration: readAudioDurationSeconds,
   reserve: (principal, reservationId) => repository().reserve(principal, reservationId),
-  analyze: analyzeAudioWithGemini,
-  complete: (reservation, report) => repository().complete(reservation, report),
+  startAnalysis: startAudioAnalysisWithGemini,
+  createJob: (job) => repository().createJob(job),
+  deleteGeminiFile: deleteGeminiAnalysisFile,
   release: (reservation) => repository().release(reservation),
   usage: (principal) => repository().usage(principal),
   removeLocalFile: async (path) => {
@@ -182,7 +183,8 @@ export async function handleAnalysisRequest(
   let storagePath: string | null = null;
   let localPath: string | null = null;
   let reservation: UsageReservation | null = null;
-  let completed = false;
+  let geminiFileName: string | null = null;
+  let handedOff = false;
 
   try {
     if (request.method !== 'POST') {
@@ -204,9 +206,9 @@ export async function handleAnalysisRequest(
     const durationSeconds = await dependencies.readDuration(localPath);
     validateAudioDuration(durationSeconds);
 
-    let generated: GeneratedReport;
+    let started: { interactionId: string; geminiFileName: string };
     try {
-      generated = await dependencies.analyze(
+      started = await dependencies.startAnalysis(
         localPath,
         normalizeAudioType(upload.contentType),
         (stage) => logAnalysisStage(requestId, stage),
@@ -214,25 +216,33 @@ export async function handleAnalysisRequest(
     } catch (error) {
       throw providerFailure(error, requestId);
     }
-    const report: SavedAnalysisReport = {
-      ...generated,
-      id: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-      fileName: input.originalName,
+    geminiFileName = started.geminiFileName;
+    const job: AnalysisJob = {
+      id: requestId,
+      uid: principal.uid,
+      status: 'processing',
+      interactionId: started.interactionId,
+      geminiFileName: started.geminiFileName,
+      originalName: input.originalName,
       durationSeconds,
+      reservation,
     };
-    await dependencies.complete(reservation, report);
-    completed = true;
-    logAnalysisStage(requestId, 'report_saved');
+    await dependencies.createJob(job);
+    handedOff = true;
+    geminiFileName = null;
+    logAnalysisStage(requestId, 'job_saved');
     const usage = await dependencies.usage(principal);
-    return jsonResponse({ report, usage }, 200, requestId);
+    return jsonResponse({ jobId: job.id, status: 'processing', usage }, 202, requestId);
   } catch (error) {
     const response = errorResponse(error, requestId);
     if (error instanceof ApiError && error.status === 405) response.headers.set('allow', 'POST');
     return response;
   } finally {
-    if (reservation && !completed) {
+    if (reservation && !handedOff) {
       await dependencies.release(reservation).catch(() => undefined);
+    }
+    if (geminiFileName) {
+      await dependencies.deleteGeminiFile(geminiFileName).catch(() => undefined);
     }
     if (localPath) {
       await dependencies.removeLocalFile(localPath).catch(() => undefined);

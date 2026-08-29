@@ -216,10 +216,10 @@ describe('transactional analysis usage', () => {
       completed: 0, reserved: 2, limit: 50,
     });
     fake.records.set('users/verified-uid/analysisReservations/stale', {
-      status: 'reserved', period, createdAt: { toMillis: () => now - 7 * 60 * 1000 },
+      status: 'reserved', period, createdAt: { toMillis: () => now - 16 * 60 * 1000 },
     });
     fake.records.set('users/verified-uid/analysisReservations/fresh', {
-      status: 'reserved', period, createdAt: { toMillis: () => now - 60 * 1000 },
+      status: 'reserved', period, createdAt: { toMillis: () => now - 14 * 60 * 1000 },
     });
     const repository = new AnalysisRepository(fake.firestore, async () => undefined);
 
