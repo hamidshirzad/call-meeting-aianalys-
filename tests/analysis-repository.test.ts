@@ -14,10 +14,14 @@ interface FakeReference {
 
 interface FakeCollection {
   doc(id: string): FakeReference;
+  where(): FakeCollection;
+  limit(): FakeCollection;
+  get(): Promise<{ docs: Array<{ ref: FakeReference; data(): Record<string, unknown> }> }>;
 }
 
 interface FakeSnapshot {
   exists: boolean;
+  ref: FakeReference;
   data(): Record<string, unknown> | undefined;
 }
 
@@ -27,6 +31,7 @@ function createFirestore(profile: Record<string, unknown>) {
   ]);
   const snapshot = (reference: FakeReference): FakeSnapshot => ({
     exists: records.has(reference.path),
+    ref: reference,
     data: () => records.get(reference.path),
   });
   const reference = (path: string): FakeReference => ({
@@ -37,6 +42,20 @@ function createFirestore(profile: Record<string, unknown>) {
   });
   const collection = (path: string): FakeCollection => ({
     doc: (id) => reference(`${path}/${id}`),
+    where: () => collection(path),
+    limit: () => collection(path),
+    get: async () => ({
+      docs: [...records.entries()]
+        .filter(([recordPath, data]) =>
+          recordPath.startsWith(`${path}/`) &&
+          !recordPath.slice(path.length + 1).includes('/') &&
+          data.status === 'reserved',
+        )
+        .map(([recordPath, data]) => ({
+          ref: reference(recordPath),
+          data: () => data,
+        })),
+    }),
   });
   const transaction = {
     get: vi.fn(async (target: FakeReference) => snapshot(target)),
@@ -87,14 +106,12 @@ function report(id: string): SavedAnalysisReport {
   };
 }
 
-const upload = { geminiNonce: 'nonce', declaredSize: 1_024, contentType: 'audio/mpeg' };
-
 describe('transactional analysis usage', () => {
   it('allows only five concurrent Free reservations', async () => {
     const fake = createFirestore({ plan: 'free', subscriptionStatus: 'none' });
     const repository = new AnalysisRepository(fake.firestore, async () => undefined);
     const attempts = await Promise.allSettled(
-      Array.from({ length: 6 }, (_, index) => repository.reserve(principal, `free-${index}`, upload)),
+      Array.from({ length: 6 }, (_, index) => repository.reserve(principal, `free-${index}`)),
     );
     expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(5);
     expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(1);
@@ -109,7 +126,7 @@ describe('transactional analysis usage', () => {
     const fake = createFirestore({ plan: 'pro', subscriptionStatus: 'active' });
     const repository = new AnalysisRepository(fake.firestore, async () => undefined);
     const attempts = await Promise.allSettled(
-      Array.from({ length: 51 }, (_, index) => repository.reserve(principal, `pro-${index}`, upload)),
+      Array.from({ length: 51 }, (_, index) => repository.reserve(principal, `pro-${index}`)),
     );
     expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(50);
     expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(1);
@@ -118,14 +135,14 @@ describe('transactional analysis usage', () => {
   it('charges only completed reports and releases failed processing', async () => {
     const fake = createFirestore({ plan: 'free', subscriptionStatus: 'none' });
     const repository = new AnalysisRepository(fake.firestore, async () => undefined);
-    const failed = await repository.reserve(principal, 'failed-request', upload);
+    const failed = await repository.reserve(principal, 'failed-request');
     await repository.release(failed);
     expect(fake.records.get(`users/verified-uid/usage/${usagePeriod()}`)).toMatchObject({
       completed: 0,
       reserved: 0,
     });
 
-    const completed = await repository.reserve(principal, 'completed-request', upload);
+    const completed = await repository.reserve(principal, 'completed-request');
     const saved = report('7f6e6f6b-38d5-4a24-9541-90aa8d91ff21');
     await repository.complete(completed, saved);
     expect(fake.records.get(`users/verified-uid/usage/${usagePeriod()}`)).toMatchObject({
@@ -134,6 +151,31 @@ describe('transactional analysis usage', () => {
     });
     expect(fake.records.get(`users/verified-uid/reports/${saved.id}`)).toMatchObject({
       summary: 'Summary',
+    });
+  });
+
+  it('releases only reservations from the retired browser-upload format', async () => {
+    const fake = createFirestore({ plan: 'pro', subscriptionStatus: 'active' });
+    const period = usagePeriod();
+    fake.records.set(`users/verified-uid/usage/${period}`, {
+      completed: 0, reserved: 2, limit: 50,
+    });
+    fake.records.set('users/verified-uid/analysisReservations/legacy', {
+      status: 'reserved', geminiNonce: 'old-secret',
+    });
+    fake.records.set('users/verified-uid/analysisReservations/current', {
+      status: 'reserved',
+    });
+    const repository = new AnalysisRepository(fake.firestore, async () => undefined);
+
+    const usage = await repository.usage(principal);
+
+    expect(usage).toMatchObject({ completed: 0, reserved: 1, remaining: 49 });
+    expect(fake.records.get('users/verified-uid/analysisReservations/legacy')).toMatchObject({
+      status: 'released', releaseReason: 'legacy-browser-upload-migration',
+    });
+    expect(fake.records.get('users/verified-uid/analysisReservations/current')).toMatchObject({
+      status: 'reserved',
     });
   });
 });

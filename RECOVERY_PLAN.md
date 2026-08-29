@@ -43,9 +43,9 @@ Price, Customer mapping, Checkout and Portal sessions, webhook signature verific
 deduplication, event ordering, subscription state, and entitlement decisions. A Checkout redirect
 never grants Pro access; only a verified webhook can update the authoritative Firestore profile.
 
-Audio upload authorization currently requires a Preview-only `GEMINI_API_KEY`. A missing key must
-fail before any audio is uploaded or usage is consumed. Firebase Storage and Supabase Storage are
-not part of the active implementation; audio goes directly to a short-lived Gemini upload session.
+Audio analysis requires Preview-only `GEMINI_API_KEY`, `SUPABASE_URL`, and `SUPABASE_SECRET_KEY`
+settings. Temporary audio uses the private Supabase `call-uploads` bucket through short-lived signed
+permissions, then is deleted after server-side Gemini processing. Firebase Storage remains unused.
 
 The product owner reports that the Belgian/EU tax treatment is confirmed. Automatic tax remains
 intentionally disabled until that treatment is documented and the matching Stripe Tax head-office

@@ -110,7 +110,7 @@ export function parseGeminiReport(value: string): GeneratedReport {
 
 async function waitForActiveFile(
   client: GoogleGenAI,
-  file: { name?: string; state?: FileState; uri?: string; mimeType?: string | null },
+  file: { name?: string; state?: FileState; uri?: string; mimeType?: string },
 ) {
   let current = file;
   for (let attempt = 0; attempt < 30 && current.state === FileState.PROCESSING; attempt += 1) {
@@ -124,117 +124,42 @@ async function waitForActiveFile(
   }
   return current;
 }
-
-const uploadEndpoint = 'https://generativelanguage.googleapis.com/upload/v1beta/files';
-
-/** A file the browser has already uploaded straight to Gemini. */
-export interface UploadedFile {
-  name: string;
-  displayName: string | null;
-  sizeBytes: number;
-  mimeType: string | null;
-  state?: FileState;
-  uri?: string;
-}
-
-function toUploadedFile(file: Record<string, unknown>): UploadedFile {
-  return {
-    name: String(file.name ?? ''),
-    displayName: typeof file.displayName === 'string' ? file.displayName : null,
-    sizeBytes: Number(file.sizeBytes ?? 0),
-    mimeType: typeof file.mimeType === 'string' ? file.mimeType : null,
-    state: file.state as FileState | undefined,
-    uri: typeof file.uri === 'string' ? file.uri : undefined,
-  };
-}
-
-/**
- * Opens a resumable upload session and returns the URL the browser sends bytes to.
- *
- * This is what removes the need for a storage bucket: the browser uploads
- * directly to Google, so audio never passes through a Vercel function and the
- * 4.5 MB request body cap never applies.
- *
- * `displayName` carries a server-only nonce. Gemini file names are project-wide,
- * so matching this nonce back at analysis time is what proves a file belongs to
- * the user who reserved it rather than to someone who guessed a name.
- *
- * Uses fetch rather than the SDK because the upload URL arrives as a response
- * header, which the SDK does not surface.
- */
-export async function startResumableUpload(
-  mimeType: string,
-  sizeBytes: number,
-  displayName: string,
-): Promise<string> {
-  const environment = loadGeminiEnvironment();
-  const response = await fetch(uploadEndpoint, {
-    method: 'POST',
-    headers: {
-      'x-goog-api-key': environment.apiKey,
-      'X-Goog-Upload-Protocol': 'resumable',
-      'X-Goog-Upload-Command': 'start',
-      'X-Goog-Upload-Header-Content-Length': String(sizeBytes),
-      'X-Goog-Upload-Header-Content-Type': mimeType,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ file: { display_name: displayName } }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Gemini refused the upload session (${response.status}).`);
-  }
-
-  const uploadUrl = response.headers.get('x-goog-upload-url');
-  if (!uploadUrl) {
-    throw new Error('Gemini did not return an upload URL.');
-  }
-  return uploadUrl;
-}
-
-export async function getUploadedFile(name: string): Promise<UploadedFile> {
-  const environment = loadGeminiEnvironment();
-  const client = new GoogleGenAI({ apiKey: environment.apiKey });
-  return toUploadedFile(await client.files.get({ name }) as Record<string, unknown>);
-}
-
-export async function deleteUploadedFile(name: string): Promise<void> {
-  const environment = loadGeminiEnvironment();
-  const client = new GoogleGenAI({ apiKey: environment.apiKey });
-  await client.files.delete({ name });
-}
-
-/**
- * Analyzes audio the browser already uploaded.
- *
- * Deletion is deliberately not handled here. The file now exists before analysis
- * starts, so it must be removed even when a request is rejected before reaching
- * this function; the route owns that cleanup in its finally block.
- */
 export async function analyzeAudioWithGemini(
-  file: UploadedFile,
+  filePath: string,
   mimeType: string,
 ): Promise<GeneratedReport> {
   const environment = loadGeminiEnvironment();
   const client = new GoogleGenAI({ apiKey: environment.apiKey });
+  let geminiFileName: string | undefined;
 
-  const active = await waitForActiveFile(client, file);
-  const interaction = await client.interactions.create({
-    model: environment.model,
-    input: [
-      { type: 'audio', uri: active.uri, mime_type: active.mimeType ?? mimeType },
-      { type: 'text', text: prompt },
-    ],
-    response_format: {
-      type: 'text',
-      mime_type: 'application/json',
-      schema: reportSchema,
-    },
-    generation_config: { max_output_tokens: 16_000 },
-  });
+  try {
+    const uploaded = await client.files.upload({
+      file: filePath,
+      config: { mimeType },
+    });
+    geminiFileName = uploaded.name;
+    const active = await waitForActiveFile(client, uploaded);
+    const interaction = await client.interactions.create({
+      model: environment.model,
+      input: [
+        { type: 'audio', uri: active.uri, mime_type: active.mimeType ?? mimeType },
+        { type: 'text', text: prompt },
+      ],
+      response_format: {
+        type: 'text',
+        mime_type: 'application/json',
+        schema: reportSchema,
+      },
+      generation_config: { max_output_tokens: 16_000 },
+    });
 
-  if (!interaction.output_text) {
-    throw new Error('Gemini returned no analysis.');
+    if (!interaction.output_text) {
+      throw new Error('Gemini returned no analysis.');
+    }
+    return parseGeminiReport(interaction.output_text);
+  } finally {
+    if (geminiFileName) {
+      await client.files.delete({ name: geminiFileName }).catch(() => undefined);
+    }
   }
-  return parseGeminiReport(interaction.output_text);
 }

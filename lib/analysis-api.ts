@@ -1,13 +1,10 @@
 import type { User } from 'firebase/auth';
-import {
-  canceledUpload,
-  describeUploadFailure,
-  stalledUpload,
-  STORAGE_UPLOAD_STALL_MS,
-} from './upload-error';
+import { Upload } from 'tus-js-client';
 import type { AnalysisUsageSummary, SavedAnalysisReport } from '../types';
 
 const MAX_AUDIO_BYTES = 50 * 1024 * 1024;
+const UPLOAD_CHUNK_BYTES = 6 * 1024 * 1024;
+const UPLOAD_STALL_MS = 2 * 60 * 1000;
 const supportedTypes = new Set([
   'audio/aac', 'audio/aiff', 'audio/flac', 'audio/m4a', 'audio/mp3', 'audio/mp4',
   'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/x-aiff', 'audio/x-m4a',
@@ -28,6 +25,14 @@ export interface ReportsResult {
   usage: AnalysisUsageSummary;
 }
 
+interface UploadAuthorization {
+  storagePath: string;
+  token: string;
+  uploadEndpoint: string;
+  bucket: string;
+  contentType: string;
+}
+
 export class AnalysisApiError extends Error {
   constructor(
     message: string,
@@ -41,7 +46,7 @@ export class AnalysisApiError extends Error {
 
 export function describeAnalysisError(error: unknown): string {
   if (error instanceof AnalysisApiError && error.code === 'SERVER_NOT_CONFIGURED') {
-    return 'Call analysis is temporarily unavailable while the AI service is being connected. Your audio was not uploaded and this did not use an analysis.';
+    return 'Call analysis is temporarily unavailable while secure storage is being connected. Your audio was not retained and this did not use an analysis.';
   }
   return error instanceof Error ? error.message : 'The call could not be analyzed.';
 }
@@ -68,17 +73,8 @@ export function validateClientAudioFile(file: File): string {
   return contentType;
 }
 
-/**
- * Reads the audio's duration in the browser.
- *
- * The server never receives the bytes, so it cannot measure this itself. Purely
- * display metadata — the server bounds whatever arrives and enforces the real
- * limit on size, which it verifies against Gemini independently.
- */
 export function readAudioDuration(file: File): Promise<number | null> {
   return new Promise((resolve) => {
-    // Never let a duration read break an upload: it is display metadata, and a
-    // codec the browser cannot decode is still one Gemini may handle fine.
     try {
       const url = URL.createObjectURL(file);
       const audio = new Audio();
@@ -130,128 +126,103 @@ async function authenticatedJson<T>(
   return value as T;
 }
 
-/**
- * Sends the audio to the URL the server minted, and returns the Gemini file name.
- *
- * XMLHttpRequest rather than fetch because it reports upload progress, which
- * fetch still cannot do. The bytes go straight to Google — no API key is needed
- * here, since the URL itself carries the upload session.
- */
-export function putAudioToUploadUrl(
-  uploadUrl: string,
+export async function uploadAudio(
+  user: User,
   file: File,
-  contentType: string,
   onProgress?: (percentage: number) => void,
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    let lastLoaded = 0;
+  const contentType = validateClientAudioFile(file);
+  const authorization = await authenticatedJson<UploadAuthorization>(
+    user,
+    '/api/uploads',
+    'POST',
+    { fileName: file.name, contentType, size: file.size },
+  );
+
+  await new Promise<void>((resolve, reject) => {
+    let lastTransferred = 0;
     let stallTimer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
 
     const clearStallTimer = () => {
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = null;
     };
-    const fail = (diagnostic: { code: string; message: string }) => {
+    const fail = (message: string, code: string) => {
+      if (settled) return;
+      settled = true;
       clearStallTimer();
-      reject(new AnalysisApiError(diagnostic.message, diagnostic.code));
+      reject(new AnalysisApiError(message, code));
     };
     const resetStallTimer = () => {
       clearStallTimer();
       stallTimer = setTimeout(() => {
-        // Reject before aborting: abort fires its own handler, and the first
-        // settle wins. Rejecting first is what surfaces "stalled" to the user
-        // rather than the "canceled" the abort would otherwise report.
-        fail(stalledUpload);
-        request.abort();
-      }, STORAGE_UPLOAD_STALL_MS);
+        void upload.abort(true).catch(() => undefined);
+        fail(
+          'The upload stopped making progress. Check your connection and try again.',
+          'STORAGE_UPLOAD_STALLED',
+        );
+      }, UPLOAD_STALL_MS);
     };
 
-    request.upload.onprogress = (event) => {
-      if (event.loaded > lastLoaded) {
-        lastLoaded = event.loaded;
-        resetStallTimer();
-      }
-      onProgress?.(
-        event.lengthComputable && event.total > 0
-          ? Math.round((event.loaded / event.total) * 100)
-          : 0,
-      );
-    };
-    request.onerror = () => fail(describeUploadFailure(null));
-    request.ontimeout = () => fail(stalledUpload);
-    request.onabort = () => fail(canceledUpload);
-    request.onload = () => {
-      clearStallTimer();
-      if (request.status < 200 || request.status >= 300) {
-        return fail(describeUploadFailure(request.status));
-      }
-      try {
-        const name = JSON.parse(request.responseText)?.file?.name;
-        if (typeof name !== 'string' || !name) {
-          return fail(describeUploadFailure(null));
+    const upload = new Upload(file, {
+      endpoint: authorization.uploadEndpoint,
+      retryDelays: [0, 3_000, 5_000, 10_000, 20_000],
+      headers: {
+        'x-signature': authorization.token,
+        'x-upsert': 'false',
+      },
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      metadata: {
+        bucketName: authorization.bucket,
+        objectName: authorization.storagePath,
+        contentType: authorization.contentType,
+        cacheControl: '0',
+      },
+      chunkSize: UPLOAD_CHUNK_BYTES,
+      onProgress: (bytesUploaded, bytesTotal) => {
+        if (bytesUploaded > lastTransferred) {
+          lastTransferred = bytesUploaded;
+          resetStallTimer();
         }
+        onProgress?.(bytesTotal > 0 ? Math.round((bytesUploaded / bytesTotal) * 100) : 0);
+      },
+      onError: () => {
+        fail('The audio upload failed. Check your connection and try again.', 'STORAGE_UPLOAD_FAILED');
+      },
+      onSuccess: () => {
+        if (settled) return;
+        settled = true;
+        clearStallTimer();
         onProgress?.(100);
-        resolve(name);
-      } catch {
-        fail(describeUploadFailure(null));
-      }
-    };
+        resolve();
+      },
+    });
 
-    request.open('PUT', uploadUrl, true);
-    request.setRequestHeader('X-Goog-Upload-Command', 'upload, finalize');
-    request.setRequestHeader('X-Goog-Upload-Offset', '0');
-    request.setRequestHeader('Content-Type', contentType);
     resetStallTimer();
-    request.send(file);
+    upload.start();
   });
+  return authorization.storagePath;
 }
 
-interface UploadTicket {
-  uploadUrl: string;
-  reservationId: string;
-}
-
-/** Where an in-flight analysis currently is, for user-facing progress. */
 export type UploadPhase = 'preparing' | 'uploading' | 'analyzing';
 
-/**
- * Uploads a call and returns its analysis.
- *
- * Three steps: ask the server to authorize the upload and mint a URL, send the
- * bytes straight to Gemini, then ask the server to analyze what was uploaded.
- * The audio never passes through our own API, which is what allows files far
- * above the platform's request body limit.
- */
 export async function analyzeAudio(
   user: User,
   file: File,
   onProgress?: (percentage: number) => void,
   onPhase?: (phase: UploadPhase) => void,
 ): Promise<AnalysisResult> {
-  const contentType = validateClientAudioFile(file);
-
-  // Authorizing the upload is a real server round-trip before any byte moves.
-  // Without this the user waits on a silent, apparently-stuck 0%.
   onPhase?.('preparing');
-  const ticket = await authenticatedJson<UploadTicket>(
-    user,
-    // Must match api/analysis-upload-url.ts: Vercel maps files to routes
-    // literally, so a nested-looking path would 404 in production.
-    '/api/analysis-upload-url',
-    'POST',
-    { size: file.size, contentType },
-  );
-
+  const durationPromise = readAudioDuration(file);
   onPhase?.('uploading');
-  const fileName = await putAudioToUploadUrl(ticket.uploadUrl, file, contentType, onProgress);
-
+  const storagePath = await uploadAudio(user, file, onProgress);
   onPhase?.('analyzing');
+  await durationPromise;
   return authenticatedJson<AnalysisResult>(user, '/api/analysis', 'POST', {
-    reservationId: ticket.reservationId,
-    fileName,
+    storagePath,
     originalName: file.name,
-    durationSeconds: await readAudioDuration(file),
   });
 }
 

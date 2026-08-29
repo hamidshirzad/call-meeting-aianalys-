@@ -18,17 +18,15 @@ remains the only subscription authority.
 - Older subscription events cannot overwrite newer subscription state.
 - Firestore rules deny browser writes to profiles, reports, usage, subscriptions, and Stripe events.
 - Firebase Admin, Gemini, Stripe keys, and webhook secrets remain server-only.
-- Audio uploads go straight from the browser to the Gemini Files API using a short-lived upload URL
-  minted server-side, so no storage bucket is involved and the API key never reaches the browser.
-- Analysis verifies the Firebase token, loads the reservation under the verified UID only, and
-  requires the uploaded file to carry the server-only nonce recorded on that reservation.
-- The size cap is re-verified against the size Gemini actually received, not the size the browser
-  declared.
+- Audio uploads use a short-lived Supabase signed token and a private `call-uploads` bucket. The
+  Supabase secret and Gemini key never reach the browser.
+- Analysis verifies the Firebase token, accepts only the caller's UID-scoped object path, and
+  validates the stored object's actual type, size, and duration before processing.
 - Free and Pro plans receive 5 and 50 completed analyses per UTC month. Transactional reservations
   prevent concurrent requests from exceeding those limits.
 - Failed processing releases its reservation. Only a report saved in the same transaction consumes
   usage.
-- Uploaded Gemini Files API objects are deleted on every exit path, including rejected requests.
+- Supabase, Vercel `/tmp`, and Gemini temporary copies are deleted on every exit path.
 - New server-created profiles always start on `free`, with `subscriptionStatus: none` and
   `entitled: false`.
 
@@ -43,10 +41,10 @@ remains the only subscription authority.
 6. The webhook transaction deduplicates the event, rejects stale state, and updates Firestore.
 7. The browser refreshes the account profile and displays the webhook-derived plan.
 8. A user with a Stripe Customer can open `POST /api/billing/portal` to manage billing.
-9. `POST /api/analysis-upload-url` verifies the token, validates the declared type and size,
-    reserves usage transactionally, and returns a Gemini upload URL carrying a server-only nonce.
-10. The browser sends the audio directly to that URL, then `POST /api/analysis` verifies the nonce
-    and the size Gemini received before analyzing.
+9. `POST /api/uploads` verifies the token, validates declared metadata, and returns a short-lived
+    signed permission for a private UID-scoped Supabase object.
+10. The browser uploads in retryable 6 MB chunks, then `POST /api/analysis` verifies the object,
+    reserves usage, downloads it server-side, and sends it to Gemini.
 11. Successful analysis saves the report and completes usage atomically; failure releases usage.
 12. `GET /api/reports` returns owner history and current usage. `DELETE /api/reports` deletes only a
     report beneath the verified UID.
@@ -183,8 +181,7 @@ Before exposing a Preview:
 2. Enable Email/Password Authentication and optionally Google Authentication.
 3. Add the stable Preview and canonical Vercel hosts to Firebase Authorized domains.
 4. Create Firestore and deploy `firestore.rules` before allowing users into the application.
-   Cloud Storage is not used; `storage.rules` remains in the repository only so the bucket path can
-   be restored if durable audio retention is ever required.
+   Firebase Cloud Storage is not used; temporary audio uses the private Supabase bucket.
 5. Configure a dedicated, least-privileged Firebase Admin service account only in the server
    environment.
 
@@ -197,23 +194,18 @@ when the emulator binary is available.
 All analysis and report endpoints require a Firebase ID token in the `Authorization` header. They
 ignore browser plan claims and reject browser-supplied UIDs.
 
-### `POST /api/analysis-upload-url`
+### `POST /api/uploads`
 
-Accepts `{ "size": number, "contentType": string }`. Validates the declared type and size, reserves
-monthly usage, and returns `{ uploadUrl, reservationId }`. The upload URL is minted with a
-server-only nonce as the Gemini file's display name; that nonce is never sent to the browser. If
-Gemini refuses the session the reservation is released rather than left holding a slot.
-
-The browser then sends the audio directly to `uploadUrl`, bypassing Vercel's 4.5 MB request body
-limit, and receives the Gemini file name.
+Accepts `{ "fileName", "size", "contentType" }`. It returns a short-lived signed upload token and a
+random path beneath `users/<verified UID>/uploads/`. The browser uses the TUS resumable protocol,
+so files bypass Vercel's request-body limit without receiving any server credential.
 
 ### `POST /api/analysis`
 
-Accepts `{ "reservationId", "fileName", "originalName", "durationSeconds" }`. The reservation is
-read under the verified UID only, so another user's reservation ID resolves to nothing. The file
-must carry the reservation's nonce, and its size as reported by Gemini must be within the cap.
-Duration is browser-reported display metadata and is bounded server-side. The uploaded file is
-deleted on every exit path. Raw audio, transcripts, and model output are never logged.
+Accepts `{ "storagePath", "originalName" }`. The path must belong to the verified UID. The server
+reads authoritative object metadata, measures duration, reserves quota transactionally, and sends
+the local temporary copy to Gemini. Failed work releases quota; every temporary copy is deleted.
+Raw audio, transcripts, keys, and model output are never logged.
 
 ### `GET /api/reports`
 

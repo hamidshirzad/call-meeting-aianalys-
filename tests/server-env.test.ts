@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { ServerConfigurationError } from '../api/_lib/api-errors';
-import { loadFirebaseAdminEnvironment } from '../api/_lib/server-env';
+import {
+  loadFirebaseAdminEnvironment,
+  loadSupabaseStorageEnvironment,
+} from '../api/_lib/server-env';
 
 const privateKey = [
   '-----BEGIN PRIVATE KEY-----',
@@ -62,5 +65,39 @@ describe('server-only Firebase Admin environment', () => {
         FIREBASE_PRIVATE_KEY: 'not-a-private-key',
       }),
     ).toThrowError(ServerConfigurationError);
+  });
+});
+
+describe('server-only Supabase Storage environment', () => {
+  it('fails closed when the project URL or secret key is missing', () => {
+    expect(() => loadSupabaseStorageEnvironment({})).toThrowError(ServerConfigurationError);
+    try {
+      loadSupabaseStorageEnvironment({});
+    } catch (error) {
+      expect(error).toMatchObject({ missingNames: ['SUPABASE_URL', 'SUPABASE_SECRET_KEY'] });
+    }
+  });
+
+  it('normalizes the URL and derives the resumable endpoint', () => {
+    expect(loadSupabaseStorageEnvironment({
+      SUPABASE_URL: 'https://project-ref.supabase.co/',
+      SUPABASE_SECRET_KEY: 'sb_secret_test-only-value',
+    })).toMatchObject({
+      url: 'https://project-ref.supabase.co',
+      bucket: 'call-uploads',
+      resumableUploadUrl: 'https://project-ref.storage.supabase.co/storage/v1/upload/resumable',
+    });
+  });
+
+  it('rejects URLs with paths and malformed bucket names', () => {
+    expect(() => loadSupabaseStorageEnvironment({
+      SUPABASE_URL: 'https://project-ref.supabase.co/not-allowed',
+      SUPABASE_SECRET_KEY: 'sb_secret_test-only-value',
+    })).toThrowError(ServerConfigurationError);
+    expect(() => loadSupabaseStorageEnvironment({
+      SUPABASE_URL: 'https://project-ref.supabase.co',
+      SUPABASE_SECRET_KEY: 'sb_secret_test-only-value',
+      SUPABASE_STORAGE_BUCKET: '../other-bucket',
+    })).toThrowError(ServerConfigurationError);
   });
 });

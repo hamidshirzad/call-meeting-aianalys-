@@ -21,19 +21,6 @@ export interface UsageReservation {
   limit: number;
 }
 
-/**
- * What the reservation remembers about the upload it authorized.
- *
- * `geminiNonce` never leaves the server. It is written into the Gemini file's
- * displayName when the upload URL is minted, so matching it later proves the
- * uploaded file is the one this reservation paid for.
- */
-export interface ReservedUpload extends UsageReservation {
-  geminiNonce: string;
-  declaredSize: number;
-  contentType: string;
-}
-
 function nonNegativeInteger(value: unknown): number {
   return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : 0;
 }
@@ -68,11 +55,52 @@ export class AnalysisRepository {
       (principal) => new UserProfileRepository(firestore).getOrCreate(principal),
   ) {}
 
-  async reserve(
-    principal: VerifiedPrincipal,
-    reservationId: string,
-    upload: { geminiNonce: string; declaredSize: number; contentType: string },
-  ): Promise<ReservedUpload> {
+  /**
+   * Repairs reservations created by the retired browser-to-Gemini upload flow.
+   * Those rows are uniquely identifiable by `geminiNonce`; new reservations
+   * never contain it, so an active analysis cannot be released here.
+   */
+  async releaseLegacyUploadReservations(uid: string): Promise<void> {
+    const userReference = this.firestore.collection('users').doc(uid);
+    const snapshot = await userReference
+      .collection('analysisReservations')
+      .where('status', '==', 'reserved')
+      .limit(50)
+      .get();
+    const legacyReferences = snapshot.docs
+      .filter((document) => typeof document.data().geminiNonce === 'string')
+      .map((document) => document.ref);
+    if (legacyReferences.length === 0) return;
+
+    const usageReference = userReference.collection('usage').doc(usagePeriod());
+    await this.firestore.runTransaction(async (transaction) => {
+      const [usageSnapshot, ...reservationSnapshots] = await Promise.all([
+        transaction.get(usageReference),
+        ...legacyReferences.map((reference) => transaction.get(reference)),
+      ]);
+      const active = reservationSnapshots.filter((reservationSnapshot) =>
+        reservationSnapshot.exists &&
+        reservationSnapshot.data()?.status === 'reserved' &&
+        typeof reservationSnapshot.data()?.geminiNonce === 'string',
+      );
+      if (active.length === 0) return;
+
+      const usage = usageSnapshot.data() ?? {};
+      transaction.set(usageReference, {
+        reserved: Math.max(0, nonNegativeInteger(usage.reserved) - active.length),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      for (const reservationSnapshot of active) {
+        transaction.update(reservationSnapshot.ref, {
+          status: 'released',
+          releaseReason: 'legacy-browser-upload-migration',
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    });
+  }
+
+  async reserve(principal: VerifiedPrincipal, reservationId: string): Promise<UsageReservation> {
     await this.ensureProfile(principal);
     const period = usagePeriod();
     const userReference = this.firestore.collection('users').doc(principal.uid);
@@ -113,54 +141,11 @@ export class AnalysisRepository {
         plan,
         limit,
         status: 'reserved',
-        geminiNonce: upload.geminiNonce,
-        declaredSize: upload.declaredSize,
-        contentType: upload.contentType,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
-      return { uid: principal.uid, id: reservationId, period, plan, limit, ...upload };
+      return { uid: principal.uid, id: reservationId, period, plan, limit };
     });
-  }
-
-  /**
-   * Loads a reservation for the analysis step.
-   *
-   * Scoped under the caller's own UID, so a client that passes someone else's
-   * reservation ID simply finds nothing. Only 'reserved' rows are returned,
-   * which is what stops a completed reservation being spent twice.
-   */
-  async loadReservation(uid: string, reservationId: string): Promise<ReservedUpload> {
-    if (!/^[a-zA-Z0-9-]{16,80}$/.test(reservationId)) {
-      throw new ApiError(400, 'ANALYSIS_INPUT_INVALID', 'The analysis request is invalid.');
-    }
-
-    const snapshot = await this.firestore
-      .collection('users')
-      .doc(uid)
-      .collection('analysisReservations')
-      .doc(reservationId)
-      .get();
-
-    const data = snapshot.data();
-    if (!snapshot.exists || !data || data.status !== 'reserved') {
-      throw new ApiError(
-        404,
-        'ANALYSIS_RESERVATION_INVALID',
-        'This upload is no longer awaiting analysis. Start a new analysis.',
-      );
-    }
-
-    return {
-      uid,
-      id: reservationId,
-      period: String(data.period),
-      plan: data.plan === 'pro' ? 'pro' : 'free',
-      limit: nonNegativeInteger(data.limit),
-      geminiNonce: String(data.geminiNonce ?? ''),
-      declaredSize: nonNegativeInteger(data.declaredSize),
-      contentType: String(data.contentType ?? ''),
-    };
   }
 
   async complete(reservation: UsageReservation, report: SavedAnalysisReport): Promise<void> {
@@ -223,6 +208,7 @@ export class AnalysisRepository {
 
   async usage(principal: VerifiedPrincipal): Promise<AnalysisUsageSummary> {
     await this.ensureProfile(principal);
+    await this.releaseLegacyUploadReservations(principal.uid);
     const period = usagePeriod();
     const userReference = this.firestore.collection('users').doc(principal.uid);
     const [profileSnapshot, usageSnapshot] = await Promise.all([

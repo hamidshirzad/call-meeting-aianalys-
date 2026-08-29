@@ -15,11 +15,14 @@
   },
   "dependencies": {
     "@google/genai": "^2.18.0",
+    "@supabase/supabase-js": "2.112.3",
     "firebase": "^12.1.0",
     "firebase-admin": "^14.3.0",
+    "music-metadata": "11.15.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "stripe": "22.4.0"
+    "stripe": "22.4.0",
+    "tus-js-client": "4.3.1"
   },
   "overrides": {
     "jwks-rsa": {
