@@ -49,7 +49,9 @@ const prompt = `Analyze this sales call as a practical sales coach.
 Return an accurate speaker-diarized transcript, sentiment scores from -1 to 1 for transcript
 segments, concise strengths, concrete improvement opportunities, and a short executive summary.
 Do not invent dialogue that is not audible. If speaker names are unknown, use Speaker 1,
-Speaker 2, and so on. Keep advice specific, respectful, and grounded in the call.`;
+Speaker 2, and so on. Keep advice specific, respectful, and grounded in the call.
+Return only valid JSON with exactly these top-level keys: diarizedTranscript, sentimentData,
+coachingCard, and summary. Do not wrap the JSON in Markdown fences.`;
 
 type GeneratedReport = Omit<SalesCallAnalysisReport, 'id' | 'timestamp'>;
 export type GeminiAnalysisStage =
@@ -68,13 +70,13 @@ export type GeminiAnalysisStage =
  * booleans, never provider data or user content.
  */
 export const GEMINI_REQUEST_FEATURES = Object.freeze({
-  background: false,
+  background: true,
   store: true,
-  structuredOutput: true,
+  structuredOutput: false,
 });
 
 const GEMINI_UPLOAD_TIMEOUT_MS = 60_000;
-const GEMINI_GENERATION_TIMEOUT_MS = 30_000;
+const GEMINI_GENERATION_TIMEOUT_MS = 60_000;
 const GEMINI_UPLOAD_RETRY_DELAYS_MS = [1_500, 4_000] as const;
 
 export function geminiProviderStatus(error: unknown): number | null {
@@ -330,7 +332,11 @@ function parseList(value: unknown): string[] {
 }
 
 export function parseGeminiReport(value: string): GeneratedReport {
-  const parsed = JSON.parse(value) as Record<string, unknown>;
+  const normalized = value
+    .trim()
+    .replace(/^\`\`\`(?:json)?\\s*/i, '')
+    .replace(/\\s*\`\`\`$/, '');
+  const parsed = JSON.parse(normalized) as Record<string, unknown>;
   const diarizedTranscript = parseTranscript(parsed.diarizedTranscript);
   const coaching = parsed.coachingCard as Record<string, unknown> | undefined;
   const coachingCard: CoachingCardData = {
@@ -400,17 +406,14 @@ export async function startAudioAnalysisWithGemini(
         { type: 'audio', uri: active.uri, mime_type: active.mimeType ?? mimeType },
         { type: 'text', text: prompt },
       ],
-      response_format: {
-        type: 'text',
-        mime_type: 'application/json',
-        schema: reportSchema,
-      },
       generation_config: { max_output_tokens: 16_000 },
-      // Controlled Preview A/B: synchronous creation avoids the provider's
-      // bare HTTP 400 for background audio interactions while keeping the
-      // interaction stored for the existing status/recovery endpoint.
+      // Durable background mode is retained for long calls. Structured output
+      // is intentionally omitted because Gemini rejected that combination for
+      // audio interactions with a bare HTTP 400; the bounded parser validates
+      // the JSON response before it crosses the server trust boundary.
+      background: GEMINI_REQUEST_FEATURES.background,
       store: GEMINI_REQUEST_FEATURES.store,
-    }, { timeout: GEMINI_GENERATION_TIMEOUT_MS, maxRetries: 1 });
+    }, { timeout: GEMINI_GENERATION_TIMEOUT_MS, maxRetries: 4 });
     if (!interaction.id || !geminiFileName) throw new Error('Gemini did not create an analysis job.');
     return { interactionId: interaction.id, geminiFileName };
   } catch (error) {
