@@ -84,7 +84,10 @@ async function uploadGeminiFile(
     try {
       return await client.files.upload({
         file: filePath,
-        config: { mimeType, httpOptions: { timeout: GEMINI_UPLOAD_TIMEOUT_MS } },
+        // Bound the local request without passing SDK HTTP overrides into the
+        // resumable upload handshake. The latter produced provider 404s in the
+        // Vercel runtime even though the same Files endpoint worked without it.
+        config: { mimeType, abortSignal: AbortSignal.timeout(GEMINI_UPLOAD_TIMEOUT_MS) },
       });
     } catch (error) {
       const delay = GEMINI_UPLOAD_RETRY_DELAYS_MS[attempt];
@@ -172,10 +175,7 @@ export async function analyzeAudioWithGemini(
   onStage?: (stage: GeminiAnalysisStage) => void,
 ): Promise<GeneratedReport> {
   const environment = loadGeminiEnvironment();
-  const client = new GoogleGenAI({
-    apiKey: environment.apiKey,
-    httpOptions: { timeout: GEMINI_UPLOAD_TIMEOUT_MS },
-  });
+  const client = new GoogleGenAI({ apiKey: environment.apiKey });
   let geminiFileName: string | undefined;
 
   try {
