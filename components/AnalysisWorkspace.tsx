@@ -3,6 +3,7 @@ import type { User } from 'firebase/auth';
 import {
   analyzeAudio,
   deleteReport,
+  describeAnalysisError,
   fetchReports,
   validateClientAudioFile,
 } from '../lib/analysis-api';
@@ -75,7 +76,7 @@ export default function AnalysisWorkspace({ user }: AnalysisWorkspaceProps) {
       setSelectedFile(null);
       if (inputReference.current) inputReference.current.value = '';
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'The call could not be analyzed.');
+      setError(describeAnalysisError(requestError));
     } finally {
       setPhase('idle');
     }
