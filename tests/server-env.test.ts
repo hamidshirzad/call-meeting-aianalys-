@@ -85,7 +85,7 @@ describe('server-only Supabase Storage environment', () => {
     })).toMatchObject({
       url: 'https://project-ref.supabase.co',
       bucket: 'call-uploads',
-      resumableUploadUrl: 'https://project-ref.storage.supabase.co/storage/v1/upload/resumable',
+      resumableUploadUrl: 'https://project-ref.storage.supabase.co/storage/v1/upload/resumable/sign',
     });
   });
 

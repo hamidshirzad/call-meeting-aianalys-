@@ -97,8 +97,8 @@ export function loadSupabaseStorageEnvironment(
     ? url.hostname.slice(0, -'.supabase.co'.length)
     : null;
   const resumableUploadUrl = projectReference
-    ? `https://${projectReference}.storage.supabase.co/storage/v1/upload/resumable`
-    : `${url.origin}/storage/v1/upload/resumable`;
+    ? `https://${projectReference}.storage.supabase.co/storage/v1/upload/resumable/sign`
+    : `${url.origin}/storage/v1/upload/resumable/sign`;
 
   return Object.freeze({
     url: url.origin,
