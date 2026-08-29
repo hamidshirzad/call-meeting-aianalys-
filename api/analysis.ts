@@ -16,7 +16,11 @@ import {
   type VerifyIdToken,
 } from './_lib/firebase-auth.js';
 import { getFirebaseAdminServices } from './_lib/firebase-admin.js';
-import { analyzeAudioWithGemini, type GeminiAnalysisStage } from './_lib/gemini-analyzer.js';
+import {
+  analyzeAudioWithGemini,
+  geminiProviderStatus,
+  type GeminiAnalysisStage,
+} from './_lib/gemini-analyzer.js';
 import { createRuntimeFetchHandler } from './_lib/runtime-handler.js';
 import {
   deleteTemporaryUpload,
@@ -105,6 +109,40 @@ function logAnalysisStage(requestId: string, stage: string): void {
   console.info('analysis_stage', { requestId, stage });
 }
 
+function providerFailure(error: unknown, requestId: string): ApiError {
+  const status = geminiProviderStatus(error);
+  const category = status === 429
+    ? 'rate_limited'
+    : status !== null && status >= 500
+      ? 'provider_unavailable'
+      : status === 400 || status === 422
+        ? 'audio_rejected'
+        : 'unknown';
+  // Status/category are bounded provider metadata. The provider message/body
+  // can contain request details and must never enter application logs.
+  console.warn('analysis_provider_failure', { requestId, providerStatus: status, category });
+
+  if (status === 429) {
+    return new ApiError(
+      503,
+      'ANALYSIS_PROVIDER_BUSY',
+      'The AI service is busy right now. Your analysis was not charged; please wait a minute and retry.',
+    );
+  }
+  if (status === 400 || status === 422) {
+    return new ApiError(
+      422,
+      'ANALYSIS_AUDIO_UNREADABLE',
+      'The AI service could not read this audio file. Try exporting it as MP3, M4A, or WAV.',
+    );
+  }
+  return new ApiError(
+    502,
+    'ANALYSIS_PROVIDER_FAILED',
+    'The AI service could not finish this analysis. Your analysis was not charged; please try again.',
+  );
+}
+
 async function readInput(request: Request): Promise<{ storagePath: unknown; originalName: string }> {
   const contentLength = Number(request.headers.get('content-length') ?? 0);
   if (contentLength > 4_096) {
@@ -166,11 +204,16 @@ export async function handleAnalysisRequest(
     const durationSeconds = await dependencies.readDuration(localPath);
     validateAudioDuration(durationSeconds);
 
-    const generated = await dependencies.analyze(
-      localPath,
-      normalizeAudioType(upload.contentType),
-      (stage) => logAnalysisStage(requestId, stage),
-    );
+    let generated: GeneratedReport;
+    try {
+      generated = await dependencies.analyze(
+        localPath,
+        normalizeAudioType(upload.contentType),
+        (stage) => logAnalysisStage(requestId, stage),
+      );
+    } catch (error) {
+      throw providerFailure(error, requestId);
+    }
     const report: SavedAnalysisReport = {
       ...generated,
       id: crypto.randomUUID(),

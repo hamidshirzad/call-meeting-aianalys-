@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseGeminiReport } from '../api/_lib/gemini-analyzer';
+import { geminiProviderStatus, parseGeminiReport } from '../api/_lib/gemini-analyzer';
 
 describe('Gemini report boundary', () => {
   it('parses and bounds the structured report', () => {
@@ -23,5 +23,12 @@ describe('Gemini report boundary', () => {
     expect(() => parseGeminiReport(JSON.stringify({ summary: 'Missing transcript' }))).toThrow(
       /incomplete/i,
     );
+  });
+
+  it('extracts only a bounded provider HTTP status', () => {
+    expect(geminiProviderStatus({ status: 429, message: 'private provider detail' })).toBe(429);
+    expect(geminiProviderStatus({ status: '503' })).toBe(503);
+    expect(geminiProviderStatus({ status: 200 })).toBeNull();
+    expect(geminiProviderStatus(new Error('network failure'))).toBeNull();
   });
 });

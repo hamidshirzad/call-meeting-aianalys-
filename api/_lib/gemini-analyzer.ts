@@ -54,6 +54,7 @@ Speaker 2, and so on. Keep advice specific, respectful, and grounded in the call
 type GeneratedReport = Omit<SalesCallAnalysisReport, 'id' | 'timestamp'>;
 export type GeminiAnalysisStage =
   | 'gemini_upload_started'
+  | 'gemini_upload_retry'
   | 'gemini_upload_completed'
   | 'gemini_file_ready'
   | 'gemini_generation_started'
@@ -61,6 +62,38 @@ export type GeminiAnalysisStage =
 
 const GEMINI_UPLOAD_TIMEOUT_MS = 60_000;
 const GEMINI_GENERATION_TIMEOUT_MS = 90_000;
+const GEMINI_UPLOAD_RETRY_DELAYS_MS = [1_500, 4_000] as const;
+
+export function geminiProviderStatus(error: unknown): number | null {
+  if (!error || typeof error !== 'object' || !('status' in error)) return null;
+  const status = Number((error as { status?: unknown }).status);
+  return Number.isInteger(status) && status >= 400 && status <= 599 ? status : null;
+}
+
+function retryableProviderStatus(status: number | null): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+async function uploadGeminiFile(
+  client: GoogleGenAI,
+  filePath: string,
+  mimeType: string,
+  onStage?: (stage: GeminiAnalysisStage) => void,
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await client.files.upload({
+        file: filePath,
+        config: { mimeType, httpOptions: { timeout: GEMINI_UPLOAD_TIMEOUT_MS } },
+      });
+    } catch (error) {
+      const delay = GEMINI_UPLOAD_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !retryableProviderStatus(geminiProviderStatus(error))) throw error;
+      onStage?.('gemini_upload_retry');
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
 
 function boundedString(value: unknown, maximum: number): string {
   return typeof value === 'string' ? value.trim().slice(0, maximum) : '';
@@ -147,10 +180,7 @@ export async function analyzeAudioWithGemini(
 
   try {
     onStage?.('gemini_upload_started');
-    const uploaded = await client.files.upload({
-      file: filePath,
-      config: { mimeType, httpOptions: { timeout: GEMINI_UPLOAD_TIMEOUT_MS } },
-    });
+    const uploaded = await uploadGeminiFile(client, filePath, mimeType, onStage);
     onStage?.('gemini_upload_completed');
     geminiFileName = uploaded.name;
     const active = await waitForActiveFile(client, uploaded);

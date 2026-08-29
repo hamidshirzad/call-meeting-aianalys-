@@ -81,8 +81,26 @@ describe('POST /api/analysis', () => {
     const response = await handleAnalysisRequest(request({
       storagePath: 'users/verified-uid/uploads/call.mp3',
     }), deps);
-    expect(response.status).toBe(500);
-    expect(await response.text()).not.toContain('provider detail');
+    expect(response.status).toBe(502);
+    const body = await response.text();
+    expect(body).not.toContain('provider detail');
+    expect(body).toContain('ANALYSIS_PROVIDER_FAILED');
+    expect(deps.release).toHaveBeenCalledWith(reservation);
+    expect(deps.deleteUpload).toHaveBeenCalledOnce();
+  });
+
+  it('returns a retryable safe response when Gemini rate-limits an upload', async () => {
+    const deps = dependencies();
+    vi.mocked(deps.analyze).mockRejectedValue({
+      name: 'ApiError', status: 429, message: 'private Google response',
+    });
+    const response = await handleAnalysisRequest(request({
+      storagePath: 'users/verified-uid/uploads/call.mp3',
+    }), deps);
+    expect(response.status).toBe(503);
+    const body = await response.text();
+    expect(body).toContain('ANALYSIS_PROVIDER_BUSY');
+    expect(body).not.toContain('private Google response');
     expect(deps.release).toHaveBeenCalledWith(reservation);
     expect(deps.deleteUpload).toHaveBeenCalledOnce();
   });
