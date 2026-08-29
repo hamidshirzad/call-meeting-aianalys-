@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
+  GEMINI_REQUEST_FEATURES,
   geminiProviderReason,
   geminiProviderStatus,
   parseGeminiReport,
 } from '../api/_lib/gemini-analyzer';
 
 describe('Gemini report boundary', () => {
+  it('uses the provider-compatible stored interaction mode', () => {
+    expect(GEMINI_REQUEST_FEATURES).toEqual({
+      background: false,
+      store: true,
+      structuredOutput: true,
+    });
+  });
+
   it('parses and bounds the structured report', () => {
     const report = parseGeminiReport(JSON.stringify({
       diarizedTranscript: [{ speaker: 'Agent', text: 'Hello' }],
