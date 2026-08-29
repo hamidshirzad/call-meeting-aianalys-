@@ -334,8 +334,8 @@ function parseList(value: unknown): string[] {
 export function parseGeminiReport(value: string): GeneratedReport {
   const normalized = value
     .trim()
-    .replace(/^\`\`\`(?:json)?\\s*/i, '')
-    .replace(/\\s*\`\`\`$/, '');
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '');
   const parsed = JSON.parse(normalized) as Record<string, unknown>;
   const diarizedTranscript = parseTranscript(parsed.diarizedTranscript);
   const coaching = parsed.coachingCard as Record<string, unknown> | undefined;
