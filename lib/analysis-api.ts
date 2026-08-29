@@ -76,32 +76,57 @@ export function validateClientAudioFile(file: File): string {
 export function describeTusUploadFailure(error: unknown): {
   status: number;
   category: 'network' | 'http' | 'client';
+  reason: UploadFailureReason;
   message: string;
 } {
   const status = error instanceof DetailedError && error.originalResponse
     ? error.originalResponse.getStatus()
     : 0;
+  const responseBody = error instanceof DetailedError && error.originalResponse
+    ? error.originalResponse.getBody().toLowerCase()
+    : '';
+  const reason = classifyUploadFailure(responseBody);
   if (status === 401 || status === 403) {
-    return { status, category: 'http', message: 'The secure upload permission was rejected. Please try again.' };
+    return { status, category: 'http', reason, message: 'The secure upload permission was rejected. Please try again.' };
   }
   if (status === 404) {
-    return { status, category: 'http', message: 'The private upload bucket was not found.' };
+    return { status, category: 'http', reason, message: 'The private upload bucket was not found.' };
   }
   if (status === 409) {
-    return { status, category: 'http', message: 'This upload session conflicted with another attempt. Please retry.' };
+    return { status, category: 'http', reason, message: 'This upload session conflicted with another attempt. Please retry.' };
   }
   if (status >= 400) {
-    return { status, category: 'http', message: `The storage service rejected the upload (HTTP ${status}).` };
+    return { status, category: 'http', reason, message: `The storage service rejected the upload (HTTP ${status}).` };
   }
   if (error instanceof Error) {
-    return { status: 0, category: 'network', message: 'The browser could not reach secure storage. Check your connection and try again.' };
+    return { status: 0, category: 'network', reason, message: 'The browser could not reach secure storage. Check your connection and try again.' };
   }
-  return { status: 0, category: 'client', message: 'The audio upload could not start. Please try again.' };
+  return { status: 0, category: 'client', reason, message: 'The audio upload could not start. Please try again.' };
+}
+
+export type UploadFailureReason =
+  | 'duplicate'
+  | 'file_size'
+  | 'mime_type'
+  | 'bucket'
+  | 'signature'
+  | 'metadata'
+  | 'unknown';
+
+export function classifyUploadFailure(responseBody: string): UploadFailureReason {
+  const body = responseBody.toLowerCase().slice(0, 2_000);
+  if (/already exists|duplicate/.test(body)) return 'duplicate';
+  if (/too large|entitytoolarge|file.?size|maximum.*size|payload.*large/.test(body)) return 'file_size';
+  if (/mime|content.?type|media.?type/.test(body)) return 'mime_type';
+  if (/bucket|not found/.test(body)) return 'bucket';
+  if (/signature|token|jwt|unauthori[sz]ed|forbidden/.test(body)) return 'signature';
+  if (/metadata|invalid request|invalid.*upload|tus/.test(body)) return 'metadata';
+  return 'unknown';
 }
 
 async function reportUploadFailure(
   user: User,
-  details: { status: number; category: string },
+  details: { status: number; category: string; reason: UploadFailureReason },
 ): Promise<void> {
   try {
     const token = await user.getIdToken();

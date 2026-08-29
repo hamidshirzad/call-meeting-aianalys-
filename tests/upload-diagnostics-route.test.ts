@@ -18,12 +18,12 @@ describe('POST /api/upload-diagnostics', () => {
       'https://example.test/api/upload-diagnostics', {
         method: 'POST',
         headers: { authorization: 'Bearer valid', 'content-type': 'application/json' },
-        body: JSON.stringify({ status: 403, category: 'http' }),
+        body: JSON.stringify({ status: 403, category: 'http', reason: 'signature' }),
       },
     ), deps);
     expect(response.status).toBe(202);
     expect(deps.record).toHaveBeenCalledWith(expect.objectContaining({
-      status: 403, category: 'http',
+      status: 403, category: 'http', reason: 'signature',
     }));
   });
 

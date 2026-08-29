@@ -5,14 +5,14 @@ import { createRuntimeFetchHandler } from './_lib/runtime-handler.js';
 
 export interface UploadDiagnosticDependencies {
   verifyIdToken: VerifyIdToken;
-  record(details: { status: number; category: string; requestId: string }): void;
+  record(details: { status: number; category: string; reason: string; requestId: string }): void;
 }
 
 const defaultDependencies: UploadDiagnosticDependencies = {
   verifyIdToken: (token, checkRevoked) =>
     getFirebaseAdminServices().auth.verifyIdToken(token, checkRevoked),
-  record: ({ status, category, requestId }) => {
-    console.warn('[api] temporary upload failed', { requestId, status, category });
+  record: ({ status, category, reason, requestId }) => {
+    console.warn('[api] temporary upload failed', { requestId, status, category, reason });
   },
 };
 
@@ -29,11 +29,14 @@ export async function handleUploadDiagnosticRequest(
     const input = await request.json() as Record<string, unknown>;
     const status = Number(input.status);
     const category = typeof input.category === 'string' ? input.category : '';
+    const reason = typeof input.reason === 'string' ? input.reason : '';
     if (!Number.isInteger(status) || status < 0 || status > 599 ||
-      !['network', 'http', 'client'].includes(category)) {
+      !['network', 'http', 'client'].includes(category) ||
+      !['duplicate', 'file_size', 'mime_type', 'bucket', 'signature', 'metadata', 'unknown']
+        .includes(reason)) {
       throw new ApiError(400, 'ANALYSIS_INPUT_INVALID', 'The upload diagnostic is invalid.');
     }
-    dependencies.record({ status, category, requestId });
+    dependencies.record({ status, category, reason, requestId });
     return jsonResponse({ recorded: true }, 202, requestId);
   } catch (error) {
     const response = errorResponse(error, requestId);

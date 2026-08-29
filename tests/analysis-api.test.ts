@@ -3,6 +3,7 @@ import type { User } from 'firebase/auth';
 import { DetailedError, type HttpResponse } from 'tus-js-client';
 import {
   AnalysisApiError,
+  classifyUploadFailure,
   deleteReport,
   describeAnalysisError,
   describeTusUploadFailure,
@@ -41,12 +42,23 @@ describe('analysis browser boundary', () => {
 
   it('turns storage HTTP failures into bounded diagnostics', () => {
     const error = new DetailedError('upload rejected');
-    error.originalResponse = { getStatus: () => 403 } as HttpResponse;
+    error.originalResponse = { getStatus: () => 403, getBody: () => '' } as HttpResponse;
     expect(describeTusUploadFailure(error)).toEqual({
       status: 403,
       category: 'http',
+      reason: 'unknown',
       message: 'The secure upload permission was rejected. Please try again.',
     });
+  });
+
+  it('reduces provider response bodies to a fixed non-sensitive reason', () => {
+    expect(classifyUploadFailure('{"message":"The object exceeds the maximum file size"}'))
+      .toBe('file_size');
+    expect(classifyUploadFailure('{"message":"mime type audio/mpeg is not allowed"}'))
+      .toBe('mime_type');
+    expect(classifyUploadFailure('token=private-value user@example.com'))
+      .toBe('signature');
+    expect(classifyUploadFailure('unrecognized provider detail')).toBe('unknown');
   });
 
   it('authenticates report reads and deletes without sending a UID', async () => {
