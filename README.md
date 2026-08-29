@@ -258,6 +258,7 @@ confirmed.
 
 ## Deferred work
 
+- Supabase lifecycle policy or authenticated sweeper for abandoned temporary uploads
 - Full re-authenticated account/data deletion
 - Vercel Preview end-to-end verification
 - Documented Belgian/EU VAT treatment and validated Stripe Tax setup before live billing
