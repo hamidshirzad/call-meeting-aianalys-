@@ -1,10 +1,9 @@
 # FourDoorAI Call Coach
 
-This branch is recovering the original browser prototype into a server-authoritative paid SaaS.
-
-Milestone 4 completes the protected launch workflow: authenticated, UID-scoped temporary audio
-uploads; transactional Free and Pro usage enforcement; server-only Gemini analysis; saved report
-history; and server-authorized report deletion. Stripe remains the only subscription authority.
+The original browser prototype has been recovered into a server-authoritative paid SaaS foundation.
+The implemented launch path includes authentication, transactional Free and Pro usage enforcement,
+server-only Gemini analysis, saved report history, and server-authorized report deletion. Stripe
+remains the only subscription authority.
 
 ## Current trust model
 
@@ -56,7 +55,7 @@ history; and server-authorized report deletion. Stripe remains the only subscrip
 
 1. Install the committed dependency graph with `npm ci`.
 2. Copy `.env.example` to `.env.local`.
-3. Fill in the six browser-safe `VITE_FIREBASE_*` web-app settings.
+3. Fill in the five browser-safe `VITE_FIREBASE_*` web-app settings.
 4. Supply separate test server credentials in the local function runtime.
 5. Run `npm run dev`.
 
