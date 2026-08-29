@@ -22,6 +22,15 @@ describe('Gemini report boundary', () => {
     });
   });
 
+  it('accepts a JSON report wrapped in a provider Markdown fence', () => {
+    const report = parseGeminiReport(`\`\`\`json
+{"diarizedTranscript":[{"speaker":"Agent","text":"Hello"}],"sentimentData":[],"coachingCard":{"strengths":[],"opportunities":[]},"summary":"Short call."}
+\`\`\``);
+
+    expect(report.summary).toBe('Short call.');
+    expect(report.diarizedTranscript).toEqual([{ speaker: 'Agent', text: 'Hello' }]);
+  });
+
   it('rejects malformed or incomplete model output', () => {
     expect(() => parseGeminiReport('{not-json')).toThrow();
     expect(() => parseGeminiReport(JSON.stringify({ summary: 'Missing transcript' }))).toThrow(
