@@ -32,6 +32,13 @@ describe('analysis browser boundary', () => {
     expect(message).not.toMatch(/SUPABASE|SECRET_KEY|server integration/i);
   });
 
+  it('turns Safari network termination into a useful recovery message', () => {
+    const message = describeAnalysisError(new TypeError('Load failed'));
+    expect(message).toMatch(/connection ended/i);
+    expect(message).toMatch(/restored automatically/i);
+    expect(message).not.toMatch(/load failed/i);
+  });
+
   it('validates supported audio locally', () => {
     expect(validateClientAudioFile(
       new File(['audio'], 'Discovery call.mp3', { type: 'audio/mpeg' }),

@@ -52,6 +52,15 @@ Do not invent dialogue that is not audible. If speaker names are unknown, use Sp
 Speaker 2, and so on. Keep advice specific, respectful, and grounded in the call.`;
 
 type GeneratedReport = Omit<SalesCallAnalysisReport, 'id' | 'timestamp'>;
+export type GeminiAnalysisStage =
+  | 'gemini_upload_started'
+  | 'gemini_upload_completed'
+  | 'gemini_file_ready'
+  | 'gemini_generation_started'
+  | 'gemini_generation_completed';
+
+const GEMINI_UPLOAD_TIMEOUT_MS = 60_000;
+const GEMINI_GENERATION_TIMEOUT_MS = 90_000;
 
 function boundedString(value: unknown, maximum: number): string {
   return typeof value === 'string' ? value.trim().slice(0, maximum) : '';
@@ -127,18 +136,26 @@ async function waitForActiveFile(
 export async function analyzeAudioWithGemini(
   filePath: string,
   mimeType: string,
+  onStage?: (stage: GeminiAnalysisStage) => void,
 ): Promise<GeneratedReport> {
   const environment = loadGeminiEnvironment();
-  const client = new GoogleGenAI({ apiKey: environment.apiKey });
+  const client = new GoogleGenAI({
+    apiKey: environment.apiKey,
+    httpOptions: { timeout: GEMINI_UPLOAD_TIMEOUT_MS },
+  });
   let geminiFileName: string | undefined;
 
   try {
+    onStage?.('gemini_upload_started');
     const uploaded = await client.files.upload({
       file: filePath,
-      config: { mimeType },
+      config: { mimeType, httpOptions: { timeout: GEMINI_UPLOAD_TIMEOUT_MS } },
     });
+    onStage?.('gemini_upload_completed');
     geminiFileName = uploaded.name;
     const active = await waitForActiveFile(client, uploaded);
+    onStage?.('gemini_file_ready');
+    onStage?.('gemini_generation_started');
     const interaction = await client.interactions.create({
       model: environment.model,
       input: [
@@ -151,7 +168,8 @@ export async function analyzeAudioWithGemini(
         schema: reportSchema,
       },
       generation_config: { max_output_tokens: 16_000 },
-    });
+    }, { timeout: GEMINI_GENERATION_TIMEOUT_MS, maxRetries: 1 });
+    onStage?.('gemini_generation_completed');
 
     if (!interaction.output_text) {
       throw new Error('Gemini returned no analysis.');

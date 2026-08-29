@@ -207,4 +207,31 @@ describe('transactional analysis usage', () => {
     expect(fake.records.get('users/verified-uid/analysisReservations/stranded'))
       .toMatchObject({ status: 'released' });
   });
+
+  it('releases stale current reservations while preserving fresh analyses', async () => {
+    const fake = createFirestore({ plan: 'pro', subscriptionStatus: 'active' });
+    const period = usagePeriod();
+    const now = Date.now();
+    fake.records.set(`users/verified-uid/usage/${period}`, {
+      completed: 0, reserved: 2, limit: 50,
+    });
+    fake.records.set('users/verified-uid/analysisReservations/stale', {
+      status: 'reserved', period, createdAt: { toMillis: () => now - 7 * 60 * 1000 },
+    });
+    fake.records.set('users/verified-uid/analysisReservations/fresh', {
+      status: 'reserved', period, createdAt: { toMillis: () => now - 60 * 1000 },
+    });
+    const repository = new AnalysisRepository(fake.firestore, async () => undefined);
+
+    await repository.releaseStaleAnalysisReservations(principal.uid, now);
+    const usage = await repository.usage(principal);
+
+    expect(usage).toMatchObject({ reserved: 1, remaining: 49 });
+    expect(fake.records.get('users/verified-uid/analysisReservations/stale')).toMatchObject({
+      status: 'released', releaseReason: 'stale-analysis-recovery',
+    });
+    expect(fake.records.get('users/verified-uid/analysisReservations/fresh')).toMatchObject({
+      status: 'reserved',
+    });
+  });
 });

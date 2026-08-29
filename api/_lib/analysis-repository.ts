@@ -21,6 +21,21 @@ export interface UsageReservation {
   limit: number;
 }
 
+const STALE_RESERVATION_AGE_MS = 6 * 60 * 1000;
+
+function timestampMillis(value: unknown): number | null {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (value && typeof value === 'object' && 'toMillis' in value) {
+    const toMillis = (value as { toMillis?: unknown }).toMillis;
+    if (typeof toMillis === 'function') {
+      const result = toMillis.call(value);
+      return typeof result === 'number' && Number.isFinite(result) ? result : null;
+    }
+  }
+  return null;
+}
+
 function nonNegativeInteger(value: unknown): number {
   return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : 0;
 }
@@ -113,6 +128,73 @@ export class AnalysisRepository {
         transaction.update(reservationSnapshot.ref, {
           status: 'released',
           releaseReason: 'legacy-browser-upload-migration',
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    });
+  }
+
+  /**
+   * Repairs current reservations whose request was terminated by the hosting
+   * platform before the handler's finally block could run. Fresh reservations
+   * are never touched, so concurrent analyses remain protected.
+   */
+  async releaseStaleAnalysisReservations(uid: string, now = Date.now()): Promise<void> {
+    const userReference = this.firestore.collection('users').doc(uid);
+    const snapshot = await userReference
+      .collection('analysisReservations')
+      .where('status', '==', 'reserved')
+      .limit(50)
+      .get();
+    const staleReferences = snapshot.docs
+      .filter((document) => {
+        const data = document.data();
+        if (typeof data.geminiNonce === 'string') return false;
+        const createdAt = timestampMillis(data.createdAt);
+        return createdAt !== null && now - createdAt >= STALE_RESERVATION_AGE_MS;
+      })
+      .map((document) => document.ref);
+    if (staleReferences.length === 0) return;
+
+    await this.firestore.runTransaction(async (transaction) => {
+      const reservationSnapshots = await Promise.all(
+        staleReferences.map((reference) => transaction.get(reference)),
+      );
+      const active = reservationSnapshots.filter((reservationSnapshot) => {
+        const data = reservationSnapshot.data();
+        const createdAt = timestampMillis(data?.createdAt);
+        return reservationSnapshot.exists &&
+          data?.status === 'reserved' &&
+          typeof data.geminiNonce !== 'string' &&
+          createdAt !== null &&
+          now - createdAt >= STALE_RESERVATION_AGE_MS;
+      });
+      if (active.length === 0) return;
+
+      const countByPeriod = new Map<string, number>();
+      for (const reservationSnapshot of active) {
+        const period = typeof reservationSnapshot.data()?.period === 'string'
+          ? reservationSnapshot.data()!.period as string
+          : usagePeriod();
+        countByPeriod.set(period, (countByPeriod.get(period) ?? 0) + 1);
+      }
+      const usageEntries = await Promise.all(
+        [...countByPeriod].map(async ([period, count]) => {
+          const reference = userReference.collection('usage').doc(period);
+          return { reference, count, snapshot: await transaction.get(reference) };
+        }),
+      );
+      for (const { reference, count, snapshot: usageSnapshot } of usageEntries) {
+        const usage = usageSnapshot.data() ?? {};
+        transaction.set(reference, {
+          reserved: Math.max(0, nonNegativeInteger(usage.reserved) - count),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+      for (const reservationSnapshot of active) {
+        transaction.update(reservationSnapshot.ref, {
+          status: 'released',
+          releaseReason: 'stale-analysis-recovery',
           updatedAt: FieldValue.serverTimestamp(),
         });
       }
@@ -228,6 +310,7 @@ export class AnalysisRepository {
   async usage(principal: VerifiedPrincipal): Promise<AnalysisUsageSummary> {
     await this.ensureProfile(principal);
     await this.releaseLegacyUploadReservations(principal.uid);
+    await this.releaseStaleAnalysisReservations(principal.uid);
     const period = usagePeriod();
     const userReference = this.firestore.collection('users').doc(principal.uid);
     const [profileSnapshot, usageSnapshot] = await Promise.all([

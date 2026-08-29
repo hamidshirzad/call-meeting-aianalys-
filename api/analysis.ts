@@ -16,7 +16,7 @@ import {
   type VerifyIdToken,
 } from './_lib/firebase-auth.js';
 import { getFirebaseAdminServices } from './_lib/firebase-admin.js';
-import { analyzeAudioWithGemini } from './_lib/gemini-analyzer.js';
+import { analyzeAudioWithGemini, type GeminiAnalysisStage } from './_lib/gemini-analyzer.js';
 import { createRuntimeFetchHandler } from './_lib/runtime-handler.js';
 import {
   deleteTemporaryUpload,
@@ -43,7 +43,11 @@ export interface AnalysisHandlerDependencies {
   deleteUpload(path: string): Promise<void>;
   readDuration(path: string): Promise<number | null>;
   reserve(principal: VerifiedPrincipal, reservationId: string): Promise<UsageReservation>;
-  analyze(path: string, mimeType: string): Promise<GeneratedReport>;
+  analyze(
+    path: string,
+    mimeType: string,
+    onStage?: (stage: GeminiAnalysisStage) => void,
+  ): Promise<GeneratedReport>;
   complete(reservation: UsageReservation, report: SavedAnalysisReport): Promise<void>;
   release(reservation: UsageReservation): Promise<void>;
   usage(principal: VerifiedPrincipal): Promise<AnalysisUsageSummary>;
@@ -95,6 +99,12 @@ function safeFileName(value: unknown): string {
   return normalized || 'Sales call';
 }
 
+function logAnalysisStage(requestId: string, stage: string): void {
+  // Fixed stage labels and an opaque request ID are the only log fields. Never
+  // log the UID, object path, filename, transcript, or provider response.
+  console.info('analysis_stage', { requestId, stage });
+}
+
 async function readInput(request: Request): Promise<{ storagePath: unknown; originalName: string }> {
   const contentLength = Number(request.headers.get('content-length') ?? 0);
   if (contentLength > 4_096) {
@@ -141,18 +151,26 @@ export async function handleAnalysisRequest(
       throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Only POST is allowed.');
     }
     const principal = await authenticateRequest(request, dependencies.verifyIdToken);
+    logAnalysisStage(requestId, 'authenticated');
     const input = await readInput(request);
     storagePath = assertOwnedUploadPath(input.storagePath, principal.uid);
     const upload = await dependencies.inspectUpload(storagePath);
     validateUploadMetadata(upload.size, upload.contentType);
+    logAnalysisStage(requestId, 'upload_inspected');
 
     reservation = await dependencies.reserve(principal, requestId);
+    logAnalysisStage(requestId, 'quota_reserved');
     localPath = join(tmpdir(), `${requestId}-audio`);
     await dependencies.downloadUpload(storagePath, localPath);
+    logAnalysisStage(requestId, 'upload_downloaded');
     const durationSeconds = await dependencies.readDuration(localPath);
     validateAudioDuration(durationSeconds);
 
-    const generated = await dependencies.analyze(localPath, normalizeAudioType(upload.contentType));
+    const generated = await dependencies.analyze(
+      localPath,
+      normalizeAudioType(upload.contentType),
+      (stage) => logAnalysisStage(requestId, stage),
+    );
     const report: SavedAnalysisReport = {
       ...generated,
       id: crypto.randomUUID(),
@@ -162,6 +180,7 @@ export async function handleAnalysisRequest(
     };
     await dependencies.complete(reservation, report);
     completed = true;
+    logAnalysisStage(requestId, 'report_saved');
     const usage = await dependencies.usage(principal);
     return jsonResponse({ report, usage }, 200, requestId);
   } catch (error) {

@@ -48,6 +48,9 @@ export function describeAnalysisError(error: unknown): string {
   if (error instanceof AnalysisApiError && error.code === 'SERVER_NOT_CONFIGURED') {
     return 'Call analysis is temporarily unavailable while secure storage is being connected. Your audio was not retained and this did not use an analysis.';
   }
+  if (error instanceof TypeError && /load failed|failed to fetch|network/i.test(error.message)) {
+    return 'The connection ended before the report was ready. Your analysis allowance will be restored automatically; please retry with a short audio file.';
+  }
   return error instanceof Error ? error.message : 'The call could not be analyzed.';
 }
 
