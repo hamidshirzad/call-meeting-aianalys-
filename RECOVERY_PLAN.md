@@ -1,6 +1,7 @@
-# Paid SaaS recovery checkpoint
+# Paid SaaS launch checkpoint
 
-This branch is the durable implementation branch for recovering the application into a production-ready paid SaaS.
+The recovery implementation is merged. This document now records the verified launch scope and the
+remaining external configuration work.
 
 ## Guardrails
 
@@ -11,7 +12,7 @@ This branch is the durable implementation branch for recovering the application 
 - Use Stripe test mode until the full Preview flow passes.
 - Do not deploy to production, alter domains, delete Vercel projects, or use live credentials without explicit approval.
 - Push implementation in small, reviewable commits.
-- Keep this pull request in draft until tests, build verification, security review, and external test configuration are complete.
+- Use a fresh Preview branch for every change and merge only after local verification and a Preview smoke test.
 
 ## Launch scope
 
@@ -29,15 +30,22 @@ Enterprise, team features, developer API keys, referrals, gamification, video ge
 - [x] Default-deny Firestore rules and emulator configuration
 - [x] Server-side Firebase Admin boundary and UID-scoped account profile repository
 - [x] Stripe test-mode Checkout, Portal, signed webhooks, and entitlement repository
-- [ ] Protected Gemini analysis and transactional usage
-- [ ] Preview and end-to-end external-service verification
+- [x] Protected Gemini analysis and transactional usage
+- [x] Stripe Sandbox Checkout, webhook, Portal, and Pro entitlement smoke test
+- [ ] Preview Gemini key configuration and real audio smoke test
+- [ ] Customer-facing copy, navigation, and empty-state polish
+- [ ] Live Stripe credentials, verified tax configuration, and custom production domain
 
-## Milestone 3 checkpoint
+## Current checkpoint
 
 Stripe billing is implemented in test mode behind verified Firebase identity. The server owns the
 Price, Customer mapping, Checkout and Portal sessions, webhook signature verification, event
 deduplication, event ordering, subscription state, and entitlement decisions. A Checkout redirect
 never grants Pro access; only a verified webhook can update the authoritative Firestore profile.
+
+Audio upload authorization currently requires a Preview-only `GEMINI_API_KEY`. A missing key must
+fail before any audio is uploaded or usage is consumed. Firebase Storage and Supabase Storage are
+not part of the active implementation; audio goes directly to a short-lived Gemini upload session.
 
 The product owner reports that the Belgian/EU tax treatment is confirmed. Automatic tax remains
 intentionally disabled until that treatment is documented and the matching Stripe Tax head-office
