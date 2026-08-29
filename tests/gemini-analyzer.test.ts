@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { geminiProviderStatus, parseGeminiReport } from '../api/_lib/gemini-analyzer';
+import {
+  geminiProviderReason,
+  geminiProviderStatus,
+  parseGeminiReport,
+} from '../api/_lib/gemini-analyzer';
 
 describe('Gemini report boundary', () => {
   it('parses and bounds the structured report', () => {
@@ -30,5 +34,15 @@ describe('Gemini report boundary', () => {
     expect(geminiProviderStatus({ status: '503' })).toBe(503);
     expect(geminiProviderStatus({ status: 200 })).toBeNull();
     expect(geminiProviderStatus(new Error('network failure'))).toBeNull();
+  });
+
+  it('reduces provider messages to fixed privacy-safe failure reasons', () => {
+    expect(geminiProviderReason({ message: 'Unsupported codec in audio container user@example.com' }))
+      .toBe('media_format');
+    expect(geminiProviderReason({ message: 'response_schema is invalid: private detail' }))
+      .toBe('response_schema');
+    expect(geminiProviderReason({ message: 'background mode unavailable' }))
+      .toBe('background_execution');
+    expect(geminiProviderReason({ message: 'private unknown detail' })).toBe('unknown');
   });
 });

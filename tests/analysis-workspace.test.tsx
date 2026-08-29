@@ -127,6 +127,7 @@ describe('analysis workspace', () => {
     const stopTrack = vi.fn();
     const stream = { getTracks: () => [{ stop: stopTrack }] } as unknown as MediaStream;
     const getUserMedia = vi.fn().mockResolvedValue(stream);
+    const recorderStart = vi.fn();
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: { getUserMedia },
@@ -149,7 +150,8 @@ describe('analysis workspace', () => {
           : options?.mimeType ?? 'audio/mp4;codecs=mp4a.40.2';
       }
 
-      start() {
+      start(timeslice?: number) {
+        recorderStart(timeslice);
         this.state = 'recording';
       }
 
@@ -183,6 +185,7 @@ describe('analysis workspace', () => {
     expect(getUserMedia).toHaveBeenCalledWith({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
+    expect(recorderStart).toHaveBeenCalledWith(undefined);
 
     fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }));
     expect(await screen.findByText(/Ready: meeting-.*\.m4a/)).toBeInTheDocument();

@@ -177,7 +177,11 @@ export default function AnalysisWorkspace({ user }: AnalysisWorkspaceProps) {
         }
         selectFile(new File(chunks, recordingName(outputType), { type: outputType }));
       };
-      recorder.start(1_000);
+      // Safari's MP4 recorder can emit fragmented MP4 when a timeslice is
+      // supplied. Concatenating those fragments produces a Blob that Safari
+      // can upload, but downstream audio decoders may reject. Let the recorder
+      // finalize one complete MP4/M4A container when Stop is pressed.
+      recorder.start();
       setRecordingState('recording');
     } catch (recordingError) {
       streamReference.current?.getTracks().forEach((track) => track.stop());

@@ -23,6 +23,7 @@ import { getFirebaseAdminServices } from './_lib/firebase-admin.js';
 import {
   deleteGeminiAnalysisFile,
   startAudioAnalysisWithGemini,
+  geminiProviderReason,
   geminiProviderStatus,
   type GeminiAnalysisStage,
 } from './_lib/gemini-analyzer.js';
@@ -121,7 +122,12 @@ function providerFailure(error: unknown, requestId: string): ApiError {
         : 'unknown';
   // Status/category are bounded provider metadata. The provider message/body
   // can contain request details and must never enter application logs.
-  console.warn('analysis_provider_failure', { requestId, providerStatus: status, category });
+  console.warn('analysis_provider_failure', {
+    requestId,
+    providerStatus: status,
+    category,
+    reason: geminiProviderReason(error),
+  });
 
   if (status === 429) {
     return new ApiError(

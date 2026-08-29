@@ -70,6 +70,29 @@ export function geminiProviderStatus(error: unknown): number | null {
   return Number.isInteger(status) && status >= 400 && status <= 599 ? status : null;
 }
 
+export type GeminiProviderReason =
+  | 'media_format'
+  | 'response_schema'
+  | 'model_capability'
+  | 'background_execution'
+  | 'file_reference'
+  | 'unknown';
+
+export function geminiProviderReason(error: unknown): GeminiProviderReason {
+  const message = error instanceof Error
+    ? error.message
+    : error && typeof error === 'object' && 'message' in error
+      ? String((error as { message?: unknown }).message ?? '')
+      : '';
+  const bounded = message.toLowerCase().slice(0, 2_000);
+  if (/mime|codec|audio format|media format|decode|container/.test(bounded)) return 'media_format';
+  if (/response.?format|response.?schema|json schema|structured output/.test(bounded)) return 'response_schema';
+  if (/background/.test(bounded)) return 'background_execution';
+  if (/model.+(support|capab)|not supported.+model/.test(bounded)) return 'model_capability';
+  if (/file|uri/.test(bounded)) return 'file_reference';
+  return 'unknown';
+}
+
 function retryableProviderStatus(status: number | null): boolean {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
