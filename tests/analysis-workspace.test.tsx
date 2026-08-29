@@ -6,6 +6,8 @@ import type { SavedAnalysisReport } from '../types';
 const mocks = vi.hoisted(() => ({
   analyzeAudio: vi.fn(),
   deleteReport: vi.fn(),
+  describeAnalysisError: vi.fn((error: unknown) =>
+    error instanceof Error ? error.message : 'The call could not be analyzed.'),
   fetchReports: vi.fn(),
   validateClientAudioFile: vi.fn(),
 }));
