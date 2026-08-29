@@ -39,6 +39,13 @@ export class AnalysisApiError extends Error {
   }
 }
 
+export function describeAnalysisError(error: unknown): string {
+  if (error instanceof AnalysisApiError && error.code === 'SERVER_NOT_CONFIGURED') {
+    return 'Call analysis is temporarily unavailable while the AI service is being connected. Your audio was not uploaded and this did not use an analysis.';
+  }
+  return error instanceof Error ? error.message : 'The call could not be analyzed.';
+}
+
 function inferredAudioType(file: File): string {
   if (file.type) return file.type.toLowerCase();
   const extension = file.name.split('.').pop()?.toLowerCase();
