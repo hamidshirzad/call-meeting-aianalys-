@@ -23,7 +23,8 @@ import { getFirebaseAdminServices } from './_lib/firebase-admin.js';
 import {
   deleteGeminiAnalysisFile,
   startAudioAnalysisWithGemini,
-  geminiProviderReason,
+  GEMINI_REQUEST_FEATURES,
+  geminiProviderDiagnostic,
   geminiProviderStatus,
   type GeminiAnalysisStage,
 } from './_lib/gemini-analyzer.js';
@@ -113,20 +114,26 @@ function logAnalysisStage(requestId: string, stage: string): void {
 
 function providerFailure(error: unknown, requestId: string): ApiError {
   const status = geminiProviderStatus(error);
+  const diagnostic = geminiProviderDiagnostic(error);
   const category = status === 429
     ? 'rate_limited'
     : status !== null && status >= 500
       ? 'provider_unavailable'
       : status === 400 || status === 422
-        ? 'audio_rejected'
+        ? 'request_rejected'
         : 'unknown';
-  // Status/category are bounded provider metadata. The provider message/body
-  // can contain request details and must never enter application logs.
+
+  // Every field here is a fixed enum, an HTTP status, an allowlisted API field
+  // path, or our own request flags. The provider message and body can carry
+  // request details and never enter application logs.
   console.warn('analysis_provider_failure', {
     requestId,
     providerStatus: status,
     category,
-    reason: geminiProviderReason(error),
+    reason: diagnostic.reason,
+    canonicalStatus: diagnostic.canonicalStatus,
+    fieldPath: diagnostic.fieldPath,
+    requestFeatures: GEMINI_REQUEST_FEATURES,
   });
 
   if (status === 429) {
@@ -136,11 +143,22 @@ function providerFailure(error: unknown, requestId: string): ApiError {
       'The AI service is busy right now. Your analysis was not charged; please wait a minute and retry.',
     );
   }
-  if (status === 400 || status === 422) {
+
+  // Only a proven media problem may blame the recording. Every other rejection
+  // is a request the service refused for reasons the customer cannot act on,
+  // and telling them to re-export their audio would send them in circles.
+  if ((status === 400 || status === 422) && diagnostic.reason === 'media_format') {
     return new ApiError(
       422,
       'ANALYSIS_AUDIO_UNREADABLE',
       'The AI service could not read this audio file. Try exporting it as MP3, M4A, or WAV.',
+    );
+  }
+  if (status === 400 || status === 422) {
+    return new ApiError(
+      502,
+      'ANALYSIS_PROVIDER_FAILED',
+      'The AI service rejected this analysis request. Your analysis was not charged and the recording was not the cause; this has been logged for us to fix.',
     );
   }
   return new ApiError(
