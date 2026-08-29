@@ -284,6 +284,13 @@ h2 {
   margin-bottom: 34px;
 }
 
+.dashboard-tagline {
+  max-width: 620px;
+  margin: 12px 0 0;
+  color: #94a3b8;
+  line-height: 1.6;
+}
+
 .dashboard-grid {
   display: grid;
   gap: 20px;
