@@ -144,7 +144,9 @@ describe('analysis workspace', () => {
       onstop: (() => void) | null = null;
 
       constructor(_stream: MediaStream, options?: MediaRecorderOptions) {
-        this.mimeType = options?.mimeType ?? 'audio/mp4';
+        this.mimeType = options?.mimeType === 'audio/mp4'
+          ? 'audio/mp4;codecs=mp4a.40.2'
+          : options?.mimeType ?? 'audio/mp4;codecs=mp4a.40.2';
       }
 
       start() {

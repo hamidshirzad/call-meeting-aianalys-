@@ -68,7 +68,11 @@ export function describeAnalysisError(error: unknown): string {
 }
 
 function inferredAudioType(file: File): string {
-  if (file.type) return file.type.toLowerCase();
+  // Safari records AAC in an MP4 container and can expose the codec as part
+  // of the MIME value (for example `audio/mp4;codecs=mp4a.40.2`). MIME
+  // parameters describe the same supported media type and must not make an
+  // otherwise valid iPhone recording fail the client-side allowlist.
+  if (file.type) return file.type.toLowerCase().split(';', 1)[0].trim();
   const extension = file.name.split('.').pop()?.toLowerCase();
   const types: Record<string, string> = {
     aac: 'audio/aac', aiff: 'audio/aiff', flac: 'audio/flac', m4a: 'audio/m4a',

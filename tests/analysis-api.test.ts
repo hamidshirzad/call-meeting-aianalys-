@@ -47,6 +47,13 @@ describe('analysis browser boundary', () => {
       .toThrow(/supported audio/i);
   });
 
+  it('accepts the codec-qualified MP4 MIME type produced by iPhone Safari recordings', () => {
+    const recording = new File(['audio'], 'meeting.m4a', {
+      type: 'audio/mp4;codecs=mp4a.40.2',
+    });
+    expect(validateClientAudioFile(recording)).toBe('audio/mp4');
+  });
+
   it('turns storage HTTP failures into bounded diagnostics', () => {
     const error = new DetailedError('upload rejected');
     error.originalResponse = { getStatus: () => 403, getBody: () => '' } as HttpResponse;
