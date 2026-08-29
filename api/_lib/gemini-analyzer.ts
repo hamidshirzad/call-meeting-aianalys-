@@ -70,9 +70,9 @@ export type GeminiAnalysisStage =
  * booleans, never provider data or user content.
  */
 export const GEMINI_REQUEST_FEATURES = Object.freeze({
-  background: true,
+  background: false,
   store: true,
-  structuredOutput: false,
+  structuredOutput: true,
 });
 
 const GEMINI_UPLOAD_TIMEOUT_MS = 60_000;
@@ -406,12 +406,16 @@ export async function startAudioAnalysisWithGemini(
         { type: 'audio', uri: active.uri, mime_type: active.mimeType ?? mimeType },
         { type: 'text', text: prompt },
       ],
+      response_format: {
+        type: 'text',
+        mime_type: 'application/json',
+        schema: reportSchema,
+      },
       generation_config: { max_output_tokens: 16_000 },
-      // Durable background mode is retained for long calls. Structured output
-      // is intentionally omitted because Gemini rejected that combination for
-      // audio interactions with a bare HTTP 400; the bounded parser validates
-      // the JSON response before it crosses the server trust boundary.
-      background: GEMINI_REQUEST_FEATURES.background,
+      // Gemini rejects this audio request whenever background mode is present,
+      // both with and without structured output. Synchronous creation is the
+      // only request shape proven to pass provider validation; the interaction
+      // remains stored so the existing status/recovery endpoint can retrieve it.
       store: GEMINI_REQUEST_FEATURES.store,
     }, { timeout: GEMINI_GENERATION_TIMEOUT_MS, maxRetries: 4 });
     if (!interaction.id || !geminiFileName) throw new Error('Gemini did not create an analysis job.');
