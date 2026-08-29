@@ -1,5 +1,5 @@
 import type { User } from 'firebase/auth';
-import { Upload } from 'tus-js-client';
+import { DetailedError, Upload } from 'tus-js-client';
 import type { AnalysisUsageSummary, SavedAnalysisReport } from '../types';
 
 const MAX_AUDIO_BYTES = 50 * 1024 * 1024;
@@ -71,6 +71,49 @@ export function validateClientAudioFile(file: File): string {
     throw new AnalysisApiError('Audio files must be 50 MB or smaller.', 'ANALYSIS_UPLOAD_TOO_LARGE');
   }
   return contentType;
+}
+
+export function describeTusUploadFailure(error: unknown): {
+  status: number;
+  category: 'network' | 'http' | 'client';
+  message: string;
+} {
+  const status = error instanceof DetailedError && error.originalResponse
+    ? error.originalResponse.getStatus()
+    : 0;
+  if (status === 401 || status === 403) {
+    return { status, category: 'http', message: 'The secure upload permission was rejected. Please try again.' };
+  }
+  if (status === 404) {
+    return { status, category: 'http', message: 'The private upload bucket was not found.' };
+  }
+  if (status === 409) {
+    return { status, category: 'http', message: 'This upload session conflicted with another attempt. Please retry.' };
+  }
+  if (status >= 400) {
+    return { status, category: 'http', message: `The storage service rejected the upload (HTTP ${status}).` };
+  }
+  if (error instanceof Error) {
+    return { status: 0, category: 'network', message: 'The browser could not reach secure storage. Check your connection and try again.' };
+  }
+  return { status: 0, category: 'client', message: 'The audio upload could not start. Please try again.' };
+}
+
+async function reportUploadFailure(
+  user: User,
+  details: { status: number; category: string },
+): Promise<void> {
+  try {
+    const token = await user.getIdToken();
+    await fetch('/api/upload-diagnostics', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(details),
+      cache: 'no-store',
+    });
+  } catch {
+    // Diagnostics must never replace or delay the original upload error.
+  }
 }
 
 export function readAudioDuration(file: File): Promise<number | null> {
@@ -188,8 +231,10 @@ export async function uploadAudio(
         }
         onProgress?.(bytesTotal > 0 ? Math.round((bytesUploaded / bytesTotal) * 100) : 0);
       },
-      onError: () => {
-        fail('The audio upload failed. Check your connection and try again.', 'STORAGE_UPLOAD_FAILED');
+      onError: (error) => {
+        const diagnostic = describeTusUploadFailure(error);
+        void reportUploadFailure(user, diagnostic);
+        fail(diagnostic.message, 'STORAGE_UPLOAD_FAILED');
       },
       onSuccess: () => {
         if (settled) return;

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { User } from 'firebase/auth';
+import { DetailedError, type HttpResponse } from 'tus-js-client';
 import {
   AnalysisApiError,
   deleteReport,
   describeAnalysisError,
+  describeTusUploadFailure,
   fetchReports,
   validateClientAudioFile,
 } from '../lib/analysis-api';
@@ -35,6 +37,16 @@ describe('analysis browser boundary', () => {
     )).toBe('audio/mpeg');
     expect(() => validateClientAudioFile(new File(['x'], 'notes.txt', { type: 'text/plain' })))
       .toThrow(/supported audio/i);
+  });
+
+  it('turns storage HTTP failures into bounded diagnostics', () => {
+    const error = new DetailedError('upload rejected');
+    error.originalResponse = { getStatus: () => 403 } as HttpResponse;
+    expect(describeTusUploadFailure(error)).toEqual({
+      status: 403,
+      category: 'http',
+      message: 'The secure upload permission was rejected. Please try again.',
+    });
   });
 
   it('authenticates report reads and deletes without sending a UID', async () => {
