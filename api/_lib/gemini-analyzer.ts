@@ -60,6 +60,7 @@ export type GeminiAnalysisStage =
   | 'gemini_upload_completed'
   | 'gemini_file_ready'
   | 'gemini_generation_started'
+  | 'gemini_generation_retry'
   | 'gemini_generation_completed';
 
 /**
@@ -78,6 +79,7 @@ export const GEMINI_REQUEST_FEATURES = Object.freeze({
 const GEMINI_UPLOAD_TIMEOUT_MS = 60_000;
 const GEMINI_GENERATION_TIMEOUT_MS = 60_000;
 const GEMINI_UPLOAD_RETRY_DELAYS_MS = [1_500, 4_000] as const;
+const GEMINI_GENERATION_RETRY_DELAYS_MS = [1_500] as const;
 
 export function geminiProviderStatus(error: unknown): number | null {
   if (!error || typeof error !== 'object' || !('status' in error)) return null;
@@ -270,8 +272,23 @@ export function geminiProviderReason(error: unknown): GeminiProviderReason {
   return geminiProviderDiagnostic(error).reason;
 }
 
-function retryableProviderStatus(status: number | null): boolean {
-  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+function retryableTransientProviderStatus(status: number | null): boolean {
+  return status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+/**
+ * Returns the delay for the single generation retry we permit.
+ *
+ * A quota response (429) must never be retried automatically: a daily limit
+ * cannot clear during this request, and SDK retries previously multiplied one
+ * customer action into as many as five provider API requests.
+ */
+export function geminiGenerationRetryDelayMs(
+  status: number | null,
+  attempt: number,
+): number | null {
+  if (!retryableTransientProviderStatus(status)) return null;
+  return GEMINI_GENERATION_RETRY_DELAYS_MS[attempt] ?? null;
 }
 
 async function uploadGeminiFile(
@@ -291,7 +308,9 @@ async function uploadGeminiFile(
       });
     } catch (error) {
       const delay = GEMINI_UPLOAD_RETRY_DELAYS_MS[attempt];
-      if (delay === undefined || !retryableProviderStatus(geminiProviderStatus(error))) throw error;
+      if (delay === undefined || !retryableTransientProviderStatus(geminiProviderStatus(error))) {
+        throw error;
+      }
       onStage?.('gemini_upload_retry');
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
@@ -400,7 +419,7 @@ export async function startAudioAnalysisWithGemini(
     const active = await waitForActiveFile(client, uploaded);
     onStage?.('gemini_file_ready');
     onStage?.('gemini_generation_started');
-    const interaction = await client.interactions.create({
+    const createInteraction = () => client.interactions.create({
       model: environment.model,
       input: [
         { type: 'audio', uri: active.uri, mime_type: active.mimeType ?? mimeType },
@@ -417,7 +436,25 @@ export async function startAudioAnalysisWithGemini(
       // only request shape proven to pass provider validation; the interaction
       // remains stored so the existing status/recovery endpoint can retrieve it.
       store: GEMINI_REQUEST_FEATURES.store,
-    }, { timeout: GEMINI_GENERATION_TIMEOUT_MS, maxRetries: 4 });
+    }, {
+      timeout: GEMINI_GENERATION_TIMEOUT_MS,
+      // The SDK retries 429 responses indiscriminately. Own retry decisions
+      // here so quota failures return immediately and cannot create a storm.
+      maxRetries: 0,
+    });
+
+    let interaction: Awaited<ReturnType<typeof createInteraction>>;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        interaction = await createInteraction();
+        break;
+      } catch (error) {
+        const delay = geminiGenerationRetryDelayMs(geminiProviderStatus(error), attempt);
+        if (delay === null) throw error;
+        onStage?.('gemini_generation_retry');
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
     if (!interaction.id || !geminiFileName) throw new Error('Gemini did not create an analysis job.');
     return { interactionId: interaction.id, geminiFileName };
   } catch (error) {
