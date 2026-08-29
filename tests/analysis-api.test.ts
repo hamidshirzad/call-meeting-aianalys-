@@ -3,7 +3,9 @@ import type { User } from 'firebase/auth';
 import {
   analyzeAudio,
   deleteReport,
+  describeAnalysisError,
   fetchReports,
+  AnalysisApiError,
   putAudioToUploadUrl,
   validateClientAudioFile,
 } from '../lib/analysis-api';
@@ -78,6 +80,16 @@ afterEach(() => {
 });
 
 describe('analysis browser boundary', () => {
+  it('turns missing AI configuration into a safe, useful message', () => {
+    const message = describeAnalysisError(
+      new AnalysisApiError('The required server integration is not configured.', 'SERVER_NOT_CONFIGURED'),
+    );
+
+    expect(message).toMatch(/AI service is being connected/i);
+    expect(message).toMatch(/audio was not uploaded/i);
+    expect(message).not.toMatch(/GEMINI_API_KEY|server integration/i);
+  });
+
   it('validates audio locally before any network call', () => {
     const file = new File(['audio'], 'Discovery call.mp3', { type: 'audio/mpeg' });
     expect(validateClientAudioFile(file)).toBe('audio/mpeg');
