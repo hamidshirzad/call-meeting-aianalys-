@@ -12,6 +12,7 @@ import {
 } from './_lib/firebase-auth.js';
 import { getFirebaseAdminServices } from './_lib/firebase-admin.js';
 import { createRuntimeFetchHandler } from './_lib/runtime-handler.js';
+import { sweepOrphanedUploads } from './_lib/supabase-storage.js';
 import type { AnalysisUsageSummary, SavedAnalysisReport } from '../types.js';
 
 export interface ReportsHandlerDependencies {
@@ -19,6 +20,7 @@ export interface ReportsHandlerDependencies {
   list(principal: VerifiedPrincipal): Promise<SavedAnalysisReport[]>;
   usage(principal: VerifiedPrincipal): Promise<AnalysisUsageSummary>;
   delete(uid: string, reportId: string): Promise<void>;
+  sweepUploads(uid: string): Promise<number>;
 }
 
 function repository() {
@@ -31,6 +33,7 @@ const defaultDependencies: ReportsHandlerDependencies = {
   list: (principal) => repository().listReports(principal.uid),
   usage: (principal) => repository().usage(principal),
   delete: (uid, reportId) => repository().deleteReport(uid, reportId),
+  sweepUploads: sweepOrphanedUploads,
 };
 
 async function readReportId(request: Request): Promise<string> {
@@ -66,6 +69,15 @@ export async function handleReportsRequest(
       dependencies.list(principal),
       dependencies.usage(principal),
     ]);
+
+    // Objects are deleted in the analysis handler's finally block, but a request
+    // that dies before reaching it leaves one behind with nothing to clean it
+    // up. Stale reservations already self-heal in AnalysisRepository.usage; this
+    // is the storage half, on the same "repair when the user looks" path.
+    // Deliberately not awaited into the response: report history must not fail
+    // or slow down because storage is unavailable.
+    void dependencies.sweepUploads(principal.uid).catch(() => undefined);
+
     return jsonResponse({ reports, usage }, 200, requestId);
   } catch (error) {
     const response = errorResponse(error, requestId);
