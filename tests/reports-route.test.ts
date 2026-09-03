@@ -9,6 +9,7 @@ function dependencies(): ReportsHandlerDependencies {
       period: '2026-08', plan: 'free', completed: 0, reserved: 0, limit: 5, remaining: 5,
     }),
     delete: vi.fn().mockResolvedValue(undefined),
+    sweepUploads: vi.fn().mockResolvedValue(0),
   };
 }
 

@@ -15,7 +15,7 @@ const copy: Record<AuthMode, { title: string; description: string; submit: strin
   },
   register: {
     title: 'Create your account',
-    description: 'Start with a secure account. Billing stays separate until Stripe is connected.',
+    description: 'Start free with five private call analyses every month.',
     submit: 'Create account',
   },
   reset: {
@@ -82,16 +82,16 @@ export default function AuthScreen({ auth }: AuthScreenProps) {
             FourDoorAI Call Coach
           </div>
           <div>
-            <p className="eyebrow">Private by design</p>
+            <p className="eyebrow">Private call coaching</p>
             <h1>Turn every call into your next advantage.</h1>
             <p>
-              Secure authentication now protects the workspace. AI analysis and billing remain
-              intentionally unavailable until their server-side controls are added.
+              Upload a recorded sales call and receive a clear summary, coaching opportunities,
+              strengths, and a speaker-by-speaker transcript.
             </p>
             <ul className="trust-list">
-              <li>No shared demo identity</li>
-              <li>No subscription state stored in the browser</li>
-              <li>No Gemini or Stripe secret shipped to customers</li>
+              <li>Five call analyses included on the Free plan</li>
+              <li>Fifty monthly analyses with Pro</li>
+              <li>Temporary audio is removed after analysis</li>
             </ul>
           </div>
         </div>

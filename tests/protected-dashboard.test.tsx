@@ -85,7 +85,7 @@ describe('protected billing dashboard', () => {
     respondWith(freeProfile);
     render(<ProtectedDashboard user={user} onLogout={vi.fn()} />);
 
-    expect(await screen.findByText(/waiting for the verified webhook/i)).toBeInTheDocument();
+    expect(await screen.findByText(/confirming your Pro access/i)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Free plan' })).toBeInTheDocument();
   });
 });

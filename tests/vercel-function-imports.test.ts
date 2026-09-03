@@ -39,8 +39,8 @@ describe('Vercel Node function module graph', () => {
   });
 
   it('routes every API path the browser calls to a real function file', () => {
-    // Vercel maps files to routes literally, so api/analysis-upload-url.ts
-    // serves /api/analysis-upload-url and never /api/analysis/upload-url.
+    // Vercel maps files to routes literally. The signed-upload endpoint is
+    // therefore api/uploads.ts -> /api/uploads.
     // Handler tests call functions directly and cannot catch that mismatch;
     // it would only appear as a 404 in production.
     const clientSources = ['lib', 'components', 'auth']

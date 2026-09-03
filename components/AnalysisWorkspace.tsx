@@ -3,6 +3,7 @@ import type { User } from 'firebase/auth';
 import {
   analyzeAudio,
   deleteReport,
+  describeAnalysisError,
   fetchReports,
   validateClientAudioFile,
 } from '../lib/analysis-api';
@@ -13,6 +14,26 @@ interface AnalysisWorkspaceProps {
 }
 
 type AnalysisPhase = 'idle' | 'preparing' | 'uploading' | 'analyzing';
+type AudioSource = 'upload' | 'record';
+type RecordingState = 'idle' | 'recording' | 'paused';
+
+const MAX_RECORDING_SECONDS = 60 * 60;
+
+function preferredRecordingType(): string {
+  const candidates = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'];
+  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) ?? '';
+}
+
+function recordingName(mimeType: string): string {
+  const extension = mimeType.includes('mp4') ? 'm4a' : 'webm';
+  return `meeting-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`;
+}
+
+function formatRecordingTime(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+  const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+  return `${minutes}:${seconds}`;
+}
 
 export default function AnalysisWorkspace({ user }: AnalysisWorkspaceProps) {
   const [reports, setReports] = useState<SavedAnalysisReport[]>([]);
@@ -23,7 +44,14 @@ export default function AnalysisWorkspace({ user }: AnalysisWorkspaceProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [audioSource, setAudioSource] = useState<AudioSource>('upload');
+  const [consentConfirmed, setConsentConfirmed] = useState(false);
+  const [recordingState, setRecordingState] = useState<RecordingState>('idle');
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const inputReference = useRef<HTMLInputElement>(null);
+  const recorderReference = useRef<MediaRecorder | null>(null);
+  const streamReference = useRef<MediaStream | null>(null);
+  const recordingChunksReference = useRef<Blob[]>([]);
 
   const loadHistory = useCallback(async () => {
     setError(null);
@@ -41,6 +69,32 @@ export default function AnalysisWorkspace({ user }: AnalysisWorkspaceProps) {
   useEffect(() => {
     void loadHistory();
   }, [loadHistory]);
+
+  const stopRecording = useCallback(() => {
+    const recorder = recorderReference.current;
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+  }, []);
+
+  useEffect(() => {
+    if (recordingState !== 'recording') return;
+    const timer = window.setInterval(() => {
+      setRecordingSeconds((current) => {
+        if (current + 1 >= MAX_RECORDING_SECONDS) {
+          window.clearInterval(timer);
+          stopRecording();
+          return MAX_RECORDING_SECONDS;
+        }
+        return current + 1;
+      });
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [recordingState, stopRecording]);
+
+  useEffect(() => () => {
+    const recorder = recorderReference.current;
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+    streamReference.current?.getTracks().forEach((track) => track.stop());
+  }, []);
 
   const selectFile = (file: File | null) => {
     setError(null);
@@ -75,9 +129,81 @@ export default function AnalysisWorkspace({ user }: AnalysisWorkspaceProps) {
       setSelectedFile(null);
       if (inputReference.current) inputReference.current.value = '';
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'The call could not be analyzed.');
+      setError(describeAnalysisError(requestError));
     } finally {
       setPhase('idle');
+    }
+  };
+
+  const startRecording = async () => {
+    setError(null);
+    if (!consentConfirmed) {
+      setError('Confirm that everyone has agreed before recording.');
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setError('This browser cannot record audio. Use the upload option instead.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      const mimeType = preferredRecordingType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 64_000 })
+        : new MediaRecorder(stream, { audioBitsPerSecond: 64_000 });
+      streamReference.current = stream;
+      recorderReference.current = recorder;
+      recordingChunksReference.current = [];
+      setSelectedFile(null);
+      setRecordingSeconds(0);
+      recorder.ondataavailable = ({ data }) => {
+        if (data.size > 0) recordingChunksReference.current.push(data);
+      };
+      recorder.onerror = () => {
+        setError('Recording stopped unexpectedly. Please try again or upload an audio file.');
+      };
+      recorder.onstop = () => {
+        const outputType = recorder.mimeType || mimeType || 'audio/webm';
+        const chunks = recordingChunksReference.current;
+        stream.getTracks().forEach((track) => track.stop());
+        streamReference.current = null;
+        recorderReference.current = null;
+        setRecordingState('idle');
+        if (chunks.length === 0) {
+          setError('No audio was recorded. Check microphone access and try again.');
+          return;
+        }
+        selectFile(new File(chunks, recordingName(outputType), { type: outputType }));
+      };
+      // Safari's MP4 recorder can emit fragmented MP4 when a timeslice is
+      // supplied. Concatenating those fragments produces a Blob that Safari
+      // can upload, but downstream audio decoders may reject. Let the recorder
+      // finalize one complete MP4/M4A container when Stop is pressed.
+      recorder.start();
+      setRecordingState('recording');
+    } catch (recordingError) {
+      streamReference.current?.getTracks().forEach((track) => track.stop());
+      streamReference.current = null;
+      setRecordingState('idle');
+      const permissionDenied = recordingError instanceof DOMException
+        && (recordingError.name === 'NotAllowedError' || recordingError.name === 'SecurityError');
+      setError(permissionDenied
+        ? 'Microphone access was denied. Allow microphone access or upload an audio file.'
+        : 'The microphone could not start. Please try again or upload an audio file.');
+    }
+  };
+
+  const toggleRecordingPause = () => {
+    const recorder = recorderReference.current;
+    if (!recorder) return;
+    if (recorder.state === 'recording') {
+      recorder.pause();
+      setRecordingState('paused');
+    } else if (recorder.state === 'paused') {
+      recorder.resume();
+      setRecordingState('recording');
     }
   };
 
@@ -103,7 +229,8 @@ export default function AnalysisWorkspace({ user }: AnalysisWorkspaceProps) {
       <p className="eyebrow">Analysis</p>
       <h2>Analyze a sales call</h2>
       <p className="muted">
-        Upload a call up to 50 MB and 60 minutes. Audio is analyzed server-side, then removed.
+        Upload a call or record an in-person meeting up to 50 MB and 60 minutes. Audio is analyzed
+        server-side, then removed.
       </p>
 
       {usage ? (
@@ -114,16 +241,76 @@ export default function AnalysisWorkspace({ user }: AnalysisWorkspaceProps) {
       ) : null}
 
       <div className="analysis-controls">
-        <label className="file-picker">
-          <span>{selectedFile?.name ?? 'Choose an audio file'}</span>
-          <input
-            ref={inputReference}
-            type="file"
-            accept="audio/*,.mp3,.m4a,.mp4,.wav,.aac,.aiff,.ogg,.flac,.webm"
-            disabled={busy || limitReached}
-            onChange={(event) => selectFile(event.target.files?.[0] ?? null)}
-          />
-        </label>
+        <div className="analysis-mode-tabs" role="group" aria-label="Audio source">
+          <button
+            type="button"
+            className={audioSource === 'upload' ? 'active' : ''}
+            aria-pressed={audioSource === 'upload'}
+            disabled={busy || recordingState !== 'idle'}
+            onClick={() => setAudioSource('upload')}
+          >Upload audio</button>
+          <button
+            type="button"
+            className={audioSource === 'record' ? 'active' : ''}
+            aria-pressed={audioSource === 'record'}
+            disabled={busy || recordingState !== 'idle'}
+            onClick={() => setAudioSource('record')}
+          >Record meeting</button>
+        </div>
+
+        {audioSource === 'upload' ? (
+          <label className="file-picker">
+            <span>{selectedFile?.name ?? 'Choose an audio file'}</span>
+            <input
+              ref={inputReference}
+              aria-label="Choose an audio file"
+              type="file"
+              accept="audio/*,.mp3,.m4a,.mp4,.wav,.aac,.aiff,.ogg,.flac,.webm"
+              disabled={busy || limitReached}
+              onChange={(event) => selectFile(event.target.files?.[0] ?? null)}
+            />
+          </label>
+        ) : (
+          <div className="recording-panel">
+            <label className="consent-check">
+              <input
+                type="checkbox"
+                checked={consentConfirmed}
+                disabled={recordingState !== 'idle'}
+                onChange={(event) => setConsentConfirmed(event.target.checked)}
+              />
+              <span>I confirm everyone has agreed to be recorded and analyzed.</span>
+            </label>
+            <div className="recording-status" role="status" aria-live="polite">
+              <span className={recordingState === 'recording' ? 'record-dot active' : 'record-dot'} />
+              <strong>{recordingState === 'idle' ? 'Ready to record' : formatRecordingTime(recordingSeconds)}</strong>
+              {recordingState === 'paused' ? <span>Paused</span> : null}
+            </div>
+            <div className="recording-actions">
+              {recordingState === 'idle' ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={busy || limitReached}
+                  onClick={() => void startRecording()}
+                >Start recording</button>
+              ) : (
+                <>
+                  <button className="secondary-button" type="button" onClick={toggleRecordingPause}>
+                    {recordingState === 'paused' ? 'Resume' : 'Pause'}
+                  </button>
+                  <button className="secondary-button danger-button" type="button" onClick={stopRecording}>
+                    Stop recording
+                  </button>
+                </>
+              )}
+            </div>
+            <p className="recording-help muted">
+              Keep this page open. This records nearby sound; it cannot capture both sides of a normal phone call.
+            </p>
+            {selectedFile ? <p className="recorded-file">Ready: {selectedFile.name}</p> : null}
+          </div>
+        )}
         <button
           className="primary-button"
           type="button"

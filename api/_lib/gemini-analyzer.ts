@@ -49,9 +49,273 @@ const prompt = `Analyze this sales call as a practical sales coach.
 Return an accurate speaker-diarized transcript, sentiment scores from -1 to 1 for transcript
 segments, concise strengths, concrete improvement opportunities, and a short executive summary.
 Do not invent dialogue that is not audible. If speaker names are unknown, use Speaker 1,
-Speaker 2, and so on. Keep advice specific, respectful, and grounded in the call.`;
+Speaker 2, and so on. Keep advice specific, respectful, and grounded in the call.
+Return only valid JSON with exactly these top-level keys: diarizedTranscript, sentimentData,
+coachingCard, and summary. Do not wrap the JSON in Markdown fences.`;
 
 type GeneratedReport = Omit<SalesCallAnalysisReport, 'id' | 'timestamp'>;
+export type GeminiAnalysisStage =
+  | 'gemini_upload_started'
+  | 'gemini_upload_retry'
+  | 'gemini_upload_completed'
+  | 'gemini_file_ready'
+  | 'gemini_generation_started'
+  | 'gemini_generation_retry'
+  | 'gemini_generation_completed';
+
+/**
+ * Optional Interactions capabilities this request opts into.
+ *
+ * Logged on failure so a rejection carrying no field attribution can still be
+ * narrowed by elimination. These are our own request parameters — fixed
+ * booleans, never provider data or user content.
+ */
+export const GEMINI_REQUEST_FEATURES = Object.freeze({
+  background: false,
+  store: true,
+  structuredOutput: true,
+});
+
+const GEMINI_UPLOAD_TIMEOUT_MS = 60_000;
+const GEMINI_GENERATION_TIMEOUT_MS = 60_000;
+const GEMINI_UPLOAD_RETRY_DELAYS_MS = [1_500, 4_000] as const;
+const GEMINI_GENERATION_RETRY_DELAYS_MS = [1_500] as const;
+
+export function geminiProviderStatus(error: unknown): number | null {
+  if (!error || typeof error !== 'object' || !('status' in error)) return null;
+  const status = Number((error as { status?: unknown }).status);
+  return Number.isInteger(status) && status >= 400 && status <= 599 ? status : null;
+}
+
+export type GeminiProviderReason =
+  | 'media_format'
+  | 'response_schema'
+  | 'model_capability'
+  | 'background_execution'
+  | 'file_reference'
+  | 'request_shape'
+  | 'unknown';
+
+export interface GeminiProviderDiagnostic {
+  reason: GeminiProviderReason;
+  /** Canonical google.rpc.Code name, e.g. INVALID_ARGUMENT. Allowlisted. */
+  canonicalStatus: string | null;
+  /** Rejected API field path, e.g. response_format.schema. Allowlisted. */
+  fieldPath: string | null;
+}
+
+/**
+ * Canonical google.rpc.Code names. Allowlisted so an unrecognised provider
+ * value can never reach a log line.
+ */
+const CANONICAL_STATUSES = new Set([
+  'CANCELLED', 'UNKNOWN', 'INVALID_ARGUMENT', 'DEADLINE_EXCEEDED', 'NOT_FOUND',
+  'ALREADY_EXISTS', 'PERMISSION_DENIED', 'RESOURCE_EXHAUSTED', 'FAILED_PRECONDITION',
+  'ABORTED', 'OUT_OF_RANGE', 'UNIMPLEMENTED', 'INTERNAL', 'UNAVAILABLE',
+  'DATA_LOSS', 'UNAUTHENTICATED',
+]);
+
+/**
+ * Request fields the Interactions API can reject, mapped to a fixed reason.
+ *
+ * Only these paths are ever recorded. They are API schema names documented in
+ * the SDK's CreateModelInteraction type, never user content, so they carry no
+ * audio, transcript, identity, or storage information.
+ */
+const FIELD_REASONS: ReadonlyArray<readonly [string, GeminiProviderReason]> = [
+  ['input.mime_type', 'media_format'],
+  ['input.uri', 'file_reference'],
+  ['response_format', 'response_schema'],
+  ['response_mime_type', 'response_schema'],
+  ['response_modalities', 'response_schema'],
+  ['generation_config', 'request_shape'],
+  ['safety_settings', 'request_shape'],
+  ['system_instruction', 'request_shape'],
+  ['tools', 'request_shape'],
+  ['labels', 'request_shape'],
+  ['environment', 'request_shape'],
+  ['service_tier', 'request_shape'],
+  ['webhook_config', 'request_shape'],
+  ['previous_interaction_id', 'request_shape'],
+  ['background', 'background_execution'],
+  ['store', 'background_execution'],
+  ['stream', 'background_execution'],
+  ['model', 'model_capability'],
+  ['input', 'request_shape'],
+];
+
+function providerErrorBody(error: unknown): Record<string, unknown> | null {
+  const raw = error instanceof Error
+    ? error.message
+    : error && typeof error === 'object' && 'message' in error
+      ? String((error as { message?: unknown }).message ?? '')
+      : '';
+  if (!raw.startsWith('{')) return null;
+  try {
+    const parsed = JSON.parse(raw.slice(0, 20_000)) as Record<string, unknown>;
+    const body = parsed.error;
+    return body && typeof body === 'object' ? body as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reduces a provider field reference to an allowlisted API path.
+ *
+ * Array indices and any leading request wrapper are stripped so that
+ * `body.input[0].mime_type` and `input.mime_type` classify identically.
+ * Anything not matching a known field returns null rather than being recorded.
+ */
+function allowlistedFieldPath(candidate: string): string | null {
+  const normalized = candidate
+    .trim()
+    .replace(/\[\d+\]/g, '')
+    .replace(/^body\./, '')
+    .replace(/^\$\./, '');
+  if (!/^[a-z0-9_.]{1,80}$/i.test(normalized)) return null;
+
+  const segments = normalized.split('.').filter(Boolean);
+  for (const [path] of FIELD_REASONS) {
+    const wanted = path.split('.');
+    // input.mime_type must also match input[0].mime_type -> input.mime_type,
+    // and response_format must match response_format.schema.type.
+    if (wanted.length === 1 && segments[0] === wanted[0]) return wanted[0];
+    if (
+      wanted.length === 2 &&
+      segments[0] === wanted[0] &&
+      segments.includes(wanted[1])
+    ) {
+      return path;
+    }
+  }
+  return null;
+}
+
+function fieldCandidates(body: Record<string, unknown>): string[] {
+  const candidates: string[] = [];
+
+  const details = Array.isArray(body.details) ? body.details : [];
+  for (const detail of details) {
+    if (!detail || typeof detail !== 'object') continue;
+    const violations = (detail as { fieldViolations?: unknown }).fieldViolations;
+    if (!Array.isArray(violations)) continue;
+    for (const violation of violations) {
+      const field = violation && typeof violation === 'object'
+        ? (violation as { field?: unknown }).field
+        : undefined;
+      if (typeof field === 'string') candidates.push(field);
+    }
+  }
+
+  // Field-name errors are frequently reported only in the message text.
+  const message = typeof body.message === 'string' ? body.message.slice(0, 2_000) : '';
+  for (const pattern of [/unknown name "([^"]{1,80})"/gi, /invalid value at '([^']{1,80})'/gi]) {
+    for (const match of message.matchAll(pattern)) candidates.push(match[1]);
+  }
+
+  return candidates;
+}
+
+function reasonForField(path: string): GeminiProviderReason {
+  for (const [candidate, reason] of FIELD_REASONS) {
+    if (path === candidate || path.startsWith(`${candidate}.`)) return reason;
+  }
+  return 'unknown';
+}
+
+function keywordReason(error: unknown): GeminiProviderReason {
+  const message = error instanceof Error
+    ? error.message
+    : error && typeof error === 'object' && 'message' in error
+      ? String((error as { message?: unknown }).message ?? '')
+      : '';
+  const bounded = message.toLowerCase().slice(0, 2_000);
+  if (/mime|codec|audio format|media format|decode|container/.test(bounded)) return 'media_format';
+  if (/response.?format|response.?schema|json schema|structured output/.test(bounded)) return 'response_schema';
+  if (/background/.test(bounded)) return 'background_execution';
+  if (/model.+(support|capab)|not supported.+model/.test(bounded)) return 'model_capability';
+  if (/file|uri/.test(bounded)) return 'file_reference';
+  return 'unknown';
+}
+
+/**
+ * Classifies a provider failure from evidence the SDK already carries.
+ *
+ * The SDK builds ApiError.message as JSON.stringify of the full provider error
+ * body, so the canonical status and the exact rejected field path are present
+ * but were previously discarded in favour of matching keywords against prose.
+ * Structured extraction is tried first; the keyword pass remains as a fallback
+ * for provider errors that carry no field reference.
+ *
+ * Only allowlisted values are returned, so neither the raw provider message nor
+ * any request content can reach a log line.
+ */
+export function geminiProviderDiagnostic(error: unknown): GeminiProviderDiagnostic {
+  const body = providerErrorBody(error);
+  const rawStatus = body && typeof body.status === 'string' ? body.status : null;
+  const canonicalStatus = rawStatus && CANONICAL_STATUSES.has(rawStatus) ? rawStatus : null;
+
+  if (body) {
+    for (const candidate of fieldCandidates(body)) {
+      const fieldPath = allowlistedFieldPath(candidate);
+      if (fieldPath) {
+        return { reason: reasonForField(fieldPath), canonicalStatus, fieldPath };
+      }
+    }
+  }
+
+  return { reason: keywordReason(error), canonicalStatus, fieldPath: null };
+}
+
+export function geminiProviderReason(error: unknown): GeminiProviderReason {
+  return geminiProviderDiagnostic(error).reason;
+}
+
+function retryableTransientProviderStatus(status: number | null): boolean {
+  return status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+/**
+ * Returns the delay for the single generation retry we permit.
+ *
+ * A quota response (429) must never be retried automatically: a daily limit
+ * cannot clear during this request, and SDK retries previously multiplied one
+ * customer action into as many as five provider API requests.
+ */
+export function geminiGenerationRetryDelayMs(
+  status: number | null,
+  attempt: number,
+): number | null {
+  if (!retryableTransientProviderStatus(status)) return null;
+  return GEMINI_GENERATION_RETRY_DELAYS_MS[attempt] ?? null;
+}
+
+async function uploadGeminiFile(
+  client: GoogleGenAI,
+  filePath: string,
+  mimeType: string,
+  onStage?: (stage: GeminiAnalysisStage) => void,
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await client.files.upload({
+        file: filePath,
+        // Bound the local request without passing SDK HTTP overrides into the
+        // resumable upload handshake. The latter produced provider 404s in the
+        // Vercel runtime even though the same Files endpoint worked without it.
+        config: { mimeType, abortSignal: AbortSignal.timeout(GEMINI_UPLOAD_TIMEOUT_MS) },
+      });
+    } catch (error) {
+      const delay = GEMINI_UPLOAD_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !retryableTransientProviderStatus(geminiProviderStatus(error))) {
+        throw error;
+      }
+      onStage?.('gemini_upload_retry');
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
 
 function boundedString(value: unknown, maximum: number): string {
   return typeof value === 'string' ? value.trim().slice(0, maximum) : '';
@@ -87,7 +351,11 @@ function parseList(value: unknown): string[] {
 }
 
 export function parseGeminiReport(value: string): GeneratedReport {
-  const parsed = JSON.parse(value) as Record<string, unknown>;
+  const normalized = value
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '');
+  const parsed = JSON.parse(normalized) as Record<string, unknown>;
   const diarizedTranscript = parseTranscript(parsed.diarizedTranscript);
   const coaching = parsed.coachingCard as Record<string, unknown> | undefined;
   const coachingCard: CoachingCardData = {
@@ -108,9 +376,19 @@ export function parseGeminiReport(value: string): GeneratedReport {
   };
 }
 
+export interface StartedGeminiAnalysis {
+  interactionId: string;
+  geminiFileName: string;
+}
+
+export type GeminiJobResult =
+  | { status: 'processing' }
+  | { status: 'completed'; report: GeneratedReport }
+  | { status: 'failed' };
+
 async function waitForActiveFile(
   client: GoogleGenAI,
-  file: { name?: string; state?: FileState; uri?: string; mimeType?: string | null },
+  file: { name?: string; state?: FileState; uri?: string; mimeType?: string },
 ) {
   let current = file;
   for (let attempt = 0; attempt < 30 && current.state === FileState.PROCESSING; attempt += 1) {
@@ -124,117 +402,85 @@ async function waitForActiveFile(
   }
   return current;
 }
-
-const uploadEndpoint = 'https://generativelanguage.googleapis.com/upload/v1beta/files';
-
-/** A file the browser has already uploaded straight to Gemini. */
-export interface UploadedFile {
-  name: string;
-  displayName: string | null;
-  sizeBytes: number;
-  mimeType: string | null;
-  state?: FileState;
-  uri?: string;
-}
-
-function toUploadedFile(file: Record<string, unknown>): UploadedFile {
-  return {
-    name: String(file.name ?? ''),
-    displayName: typeof file.displayName === 'string' ? file.displayName : null,
-    sizeBytes: Number(file.sizeBytes ?? 0),
-    mimeType: typeof file.mimeType === 'string' ? file.mimeType : null,
-    state: file.state as FileState | undefined,
-    uri: typeof file.uri === 'string' ? file.uri : undefined,
-  };
-}
-
-/**
- * Opens a resumable upload session and returns the URL the browser sends bytes to.
- *
- * This is what removes the need for a storage bucket: the browser uploads
- * directly to Google, so audio never passes through a Vercel function and the
- * 4.5 MB request body cap never applies.
- *
- * `displayName` carries a server-only nonce. Gemini file names are project-wide,
- * so matching this nonce back at analysis time is what proves a file belongs to
- * the user who reserved it rather than to someone who guessed a name.
- *
- * Uses fetch rather than the SDK because the upload URL arrives as a response
- * header, which the SDK does not surface.
- */
-export async function startResumableUpload(
+export async function startAudioAnalysisWithGemini(
+  filePath: string,
   mimeType: string,
-  sizeBytes: number,
-  displayName: string,
-): Promise<string> {
+  onStage?: (stage: GeminiAnalysisStage) => void,
+): Promise<StartedGeminiAnalysis> {
   const environment = loadGeminiEnvironment();
-  const response = await fetch(uploadEndpoint, {
-    method: 'POST',
-    headers: {
-      'x-goog-api-key': environment.apiKey,
-      'X-Goog-Upload-Protocol': 'resumable',
-      'X-Goog-Upload-Command': 'start',
-      'X-Goog-Upload-Header-Content-Length': String(sizeBytes),
-      'X-Goog-Upload-Header-Content-Type': mimeType,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ file: { display_name: displayName } }),
+  const client = new GoogleGenAI({ apiKey: environment.apiKey });
+  let geminiFileName: string | undefined;
+
+  try {
+    onStage?.('gemini_upload_started');
+    const uploaded = await uploadGeminiFile(client, filePath, mimeType, onStage);
+    onStage?.('gemini_upload_completed');
+    geminiFileName = uploaded.name;
+    const active = await waitForActiveFile(client, uploaded);
+    onStage?.('gemini_file_ready');
+    onStage?.('gemini_generation_started');
+    const createInteraction = () => client.interactions.create({
+      model: environment.model,
+      input: [
+        { type: 'audio', uri: active.uri, mime_type: active.mimeType ?? mimeType },
+        { type: 'text', text: prompt },
+      ],
+      response_format: {
+        type: 'text',
+        mime_type: 'application/json',
+        schema: reportSchema,
+      },
+      generation_config: { max_output_tokens: 16_000 },
+      // Gemini rejects this audio request whenever background mode is present,
+      // both with and without structured output. Synchronous creation is the
+      // only request shape proven to pass provider validation; the interaction
+      // remains stored so the existing status/recovery endpoint can retrieve it.
+      store: GEMINI_REQUEST_FEATURES.store,
+    }, {
+      timeout: GEMINI_GENERATION_TIMEOUT_MS,
+      // The SDK retries 429 responses indiscriminately. Own retry decisions
+      // here so quota failures return immediately and cannot create a storm.
+      maxRetries: 0,
+    });
+
+    let interaction: Awaited<ReturnType<typeof createInteraction>>;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        interaction = await createInteraction();
+        break;
+      } catch (error) {
+        const delay = geminiGenerationRetryDelayMs(geminiProviderStatus(error), attempt);
+        if (delay === null) throw error;
+        onStage?.('gemini_generation_retry');
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+    if (!interaction.id || !geminiFileName) throw new Error('Gemini did not create an analysis job.');
+    return { interactionId: interaction.id, geminiFileName };
+  } catch (error) {
+    if (geminiFileName) await client.files.delete({ name: geminiFileName }).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function getGeminiAnalysis(interactionId: string): Promise<GeminiJobResult> {
+  const environment = loadGeminiEnvironment();
+  const client = new GoogleGenAI({ apiKey: environment.apiKey });
+  const interaction = await client.interactions.get(interactionId, null, {
+    timeout: GEMINI_GENERATION_TIMEOUT_MS,
+    maxRetries: 1,
   });
-
-  if (!response.ok) {
-    throw new Error(`Gemini refused the upload session (${response.status}).`);
+  if (interaction.status === 'queued' || interaction.status === 'in_progress') {
+    return { status: 'processing' };
   }
-
-  const uploadUrl = response.headers.get('x-goog-upload-url');
-  if (!uploadUrl) {
-    throw new Error('Gemini did not return an upload URL.');
+  if (interaction.status !== 'completed' || !interaction.output_text) {
+    return { status: 'failed' };
   }
-  return uploadUrl;
+  return { status: 'completed', report: parseGeminiReport(interaction.output_text) };
 }
 
-export async function getUploadedFile(name: string): Promise<UploadedFile> {
+export async function deleteGeminiAnalysisFile(geminiFileName: string): Promise<void> {
   const environment = loadGeminiEnvironment();
   const client = new GoogleGenAI({ apiKey: environment.apiKey });
-  return toUploadedFile(await client.files.get({ name }) as Record<string, unknown>);
-}
-
-export async function deleteUploadedFile(name: string): Promise<void> {
-  const environment = loadGeminiEnvironment();
-  const client = new GoogleGenAI({ apiKey: environment.apiKey });
-  await client.files.delete({ name });
-}
-
-/**
- * Analyzes audio the browser already uploaded.
- *
- * Deletion is deliberately not handled here. The file now exists before analysis
- * starts, so it must be removed even when a request is rejected before reaching
- * this function; the route owns that cleanup in its finally block.
- */
-export async function analyzeAudioWithGemini(
-  file: UploadedFile,
-  mimeType: string,
-): Promise<GeneratedReport> {
-  const environment = loadGeminiEnvironment();
-  const client = new GoogleGenAI({ apiKey: environment.apiKey });
-
-  const active = await waitForActiveFile(client, file);
-  const interaction = await client.interactions.create({
-    model: environment.model,
-    input: [
-      { type: 'audio', uri: active.uri, mime_type: active.mimeType ?? mimeType },
-      { type: 'text', text: prompt },
-    ],
-    response_format: {
-      type: 'text',
-      mime_type: 'application/json',
-      schema: reportSchema,
-    },
-    generation_config: { max_output_tokens: 16_000 },
-  });
-
-  if (!interaction.output_text) {
-    throw new Error('Gemini returned no analysis.');
-  }
-  return parseGeminiReport(interaction.output_text);
+  await client.files.delete({ name: geminiFileName }).catch(() => undefined);
 }

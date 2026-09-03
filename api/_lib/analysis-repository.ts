@@ -21,17 +21,30 @@ export interface UsageReservation {
   limit: number;
 }
 
-/**
- * What the reservation remembers about the upload it authorized.
- *
- * `geminiNonce` never leaves the server. It is written into the Gemini file's
- * displayName when the upload URL is minted, so matching it later proves the
- * uploaded file is the one this reservation paid for.
- */
-export interface ReservedUpload extends UsageReservation {
-  geminiNonce: string;
-  declaredSize: number;
-  contentType: string;
+export interface AnalysisJob {
+  id: string;
+  uid: string;
+  status: 'processing' | 'completed' | 'failed';
+  interactionId: string;
+  geminiFileName: string;
+  originalName: string;
+  durationSeconds: number | null;
+  reservation: UsageReservation;
+}
+
+const STALE_RESERVATION_AGE_MS = 15 * 60 * 1000;
+
+function timestampMillis(value: unknown): number | null {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (value && typeof value === 'object' && 'toMillis' in value) {
+    const toMillis = (value as { toMillis?: unknown }).toMillis;
+    if (typeof toMillis === 'function') {
+      const result = toMillis.call(value);
+      return typeof result === 'number' && Number.isFinite(result) ? result : null;
+    }
+  }
+  return null;
 }
 
 function nonNegativeInteger(value: unknown): number {
@@ -68,11 +81,138 @@ export class AnalysisRepository {
       (principal) => new UserProfileRepository(firestore).getOrCreate(principal),
   ) {}
 
-  async reserve(
-    principal: VerifiedPrincipal,
-    reservationId: string,
-    upload: { geminiNonce: string; declaredSize: number; contentType: string },
-  ): Promise<ReservedUpload> {
+  /**
+   * Repairs reservations created by the retired browser-to-Gemini upload flow.
+   * Those rows are uniquely identifiable by `geminiNonce`; new reservations
+   * never contain it, so an active analysis cannot be released here.
+   */
+  async releaseLegacyUploadReservations(uid: string): Promise<void> {
+    const userReference = this.firestore.collection('users').doc(uid);
+    const snapshot = await userReference
+      .collection('analysisReservations')
+      .where('status', '==', 'reserved')
+      .limit(50)
+      .get();
+    const legacyReferences = snapshot.docs
+      .filter((document) => typeof document.data().geminiNonce === 'string')
+      .map((document) => document.ref);
+    if (legacyReferences.length === 0) return;
+
+    await this.firestore.runTransaction(async (transaction) => {
+      const reservationSnapshots = await Promise.all(
+        legacyReferences.map((reference) => transaction.get(reference)),
+      );
+      const active = reservationSnapshots.filter((reservationSnapshot) =>
+        reservationSnapshot.exists &&
+        reservationSnapshot.data()?.status === 'reserved' &&
+        typeof reservationSnapshot.data()?.geminiNonce === 'string',
+      );
+      if (active.length === 0) return;
+
+      // Release against each reservation's own period. A stranded reservation
+      // from a previous month must not decrement this month's counter: that
+      // leaves the old month overcounted and hands the user a free slot now.
+      const countByPeriod = new Map<string, number>();
+      for (const reservationSnapshot of active) {
+        const period = typeof reservationSnapshot.data()?.period === 'string'
+          ? reservationSnapshot.data()!.period as string
+          : usagePeriod();
+        countByPeriod.set(period, (countByPeriod.get(period) ?? 0) + 1);
+      }
+
+      const usageEntries = await Promise.all(
+        [...countByPeriod].map(async ([period, count]) => {
+          const reference = userReference.collection('usage').doc(period);
+          return { reference, count, snapshot: await transaction.get(reference) };
+        }),
+      );
+
+      for (const { reference, count, snapshot: usageSnapshot } of usageEntries) {
+        const usage = usageSnapshot.data() ?? {};
+        transaction.set(reference, {
+          reserved: Math.max(0, nonNegativeInteger(usage.reserved) - count),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      for (const reservationSnapshot of active) {
+        transaction.update(reservationSnapshot.ref, {
+          status: 'released',
+          releaseReason: 'legacy-browser-upload-migration',
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    });
+  }
+
+  /**
+   * Repairs current reservations whose request was terminated by the hosting
+   * platform before the handler's finally block could run. Fresh reservations
+   * are never touched, so concurrent analyses remain protected.
+   */
+  async releaseStaleAnalysisReservations(uid: string, now = Date.now()): Promise<void> {
+    const userReference = this.firestore.collection('users').doc(uid);
+    const snapshot = await userReference
+      .collection('analysisReservations')
+      .where('status', '==', 'reserved')
+      .limit(50)
+      .get();
+    const staleReferences = snapshot.docs
+      .filter((document) => {
+        const data = document.data();
+        if (typeof data.geminiNonce === 'string') return false;
+        const createdAt = timestampMillis(data.createdAt);
+        return createdAt !== null && now - createdAt >= STALE_RESERVATION_AGE_MS;
+      })
+      .map((document) => document.ref);
+    if (staleReferences.length === 0) return;
+
+    await this.firestore.runTransaction(async (transaction) => {
+      const reservationSnapshots = await Promise.all(
+        staleReferences.map((reference) => transaction.get(reference)),
+      );
+      const active = reservationSnapshots.filter((reservationSnapshot) => {
+        const data = reservationSnapshot.data();
+        const createdAt = timestampMillis(data?.createdAt);
+        return reservationSnapshot.exists &&
+          data?.status === 'reserved' &&
+          typeof data.geminiNonce !== 'string' &&
+          createdAt !== null &&
+          now - createdAt >= STALE_RESERVATION_AGE_MS;
+      });
+      if (active.length === 0) return;
+
+      const countByPeriod = new Map<string, number>();
+      for (const reservationSnapshot of active) {
+        const period = typeof reservationSnapshot.data()?.period === 'string'
+          ? reservationSnapshot.data()!.period as string
+          : usagePeriod();
+        countByPeriod.set(period, (countByPeriod.get(period) ?? 0) + 1);
+      }
+      const usageEntries = await Promise.all(
+        [...countByPeriod].map(async ([period, count]) => {
+          const reference = userReference.collection('usage').doc(period);
+          return { reference, count, snapshot: await transaction.get(reference) };
+        }),
+      );
+      for (const { reference, count, snapshot: usageSnapshot } of usageEntries) {
+        const usage = usageSnapshot.data() ?? {};
+        transaction.set(reference, {
+          reserved: Math.max(0, nonNegativeInteger(usage.reserved) - count),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+      for (const reservationSnapshot of active) {
+        transaction.update(reservationSnapshot.ref, {
+          status: 'released',
+          releaseReason: 'stale-analysis-recovery',
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    });
+  }
+
+  async reserve(principal: VerifiedPrincipal, reservationId: string): Promise<UsageReservation> {
     await this.ensureProfile(principal);
     const period = usagePeriod();
     const userReference = this.firestore.collection('users').doc(principal.uid);
@@ -113,54 +253,11 @@ export class AnalysisRepository {
         plan,
         limit,
         status: 'reserved',
-        geminiNonce: upload.geminiNonce,
-        declaredSize: upload.declaredSize,
-        contentType: upload.contentType,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
-      return { uid: principal.uid, id: reservationId, period, plan, limit, ...upload };
+      return { uid: principal.uid, id: reservationId, period, plan, limit };
     });
-  }
-
-  /**
-   * Loads a reservation for the analysis step.
-   *
-   * Scoped under the caller's own UID, so a client that passes someone else's
-   * reservation ID simply finds nothing. Only 'reserved' rows are returned,
-   * which is what stops a completed reservation being spent twice.
-   */
-  async loadReservation(uid: string, reservationId: string): Promise<ReservedUpload> {
-    if (!/^[a-zA-Z0-9-]{16,80}$/.test(reservationId)) {
-      throw new ApiError(400, 'ANALYSIS_INPUT_INVALID', 'The analysis request is invalid.');
-    }
-
-    const snapshot = await this.firestore
-      .collection('users')
-      .doc(uid)
-      .collection('analysisReservations')
-      .doc(reservationId)
-      .get();
-
-    const data = snapshot.data();
-    if (!snapshot.exists || !data || data.status !== 'reserved') {
-      throw new ApiError(
-        404,
-        'ANALYSIS_RESERVATION_INVALID',
-        'This upload is no longer awaiting analysis. Start a new analysis.',
-      );
-    }
-
-    return {
-      uid,
-      id: reservationId,
-      period: String(data.period),
-      plan: data.plan === 'pro' ? 'pro' : 'free',
-      limit: nonNegativeInteger(data.limit),
-      geminiNonce: String(data.geminiNonce ?? ''),
-      declaredSize: nonNegativeInteger(data.declaredSize),
-      contentType: String(data.contentType ?? ''),
-    };
   }
 
   async complete(reservation: UsageReservation, report: SavedAnalysisReport): Promise<void> {
@@ -198,6 +295,49 @@ export class AnalysisRepository {
     });
   }
 
+  async createJob(job: AnalysisJob): Promise<void> {
+    const reference = this.firestore
+      .collection('users').doc(job.uid)
+      .collection('analysisJobs').doc(job.id);
+    await this.firestore.runTransaction(async (transaction) => {
+      const existing = await transaction.get(reference);
+      if (existing.exists) throw new Error('The analysis job already exists.');
+      transaction.create(reference, {
+        ...job,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  async getJob(uid: string, jobId: string): Promise<AnalysisJob | null> {
+    if (!/^[a-zA-Z0-9-]{16,80}$/.test(jobId)) return null;
+    const snapshot = await this.firestore
+      .collection('users').doc(uid)
+      .collection('analysisJobs').doc(jobId)
+      .get();
+    return snapshot.exists ? snapshot.data() as AnalysisJob : null;
+  }
+
+  async updateJobStatus(
+    uid: string,
+    jobId: string,
+    status: AnalysisJob['status'],
+  ): Promise<void> {
+    await this.firestore
+      .collection('users').doc(uid)
+      .collection('analysisJobs').doc(jobId)
+      .set({ status, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  }
+
+  async getReport(uid: string, reportId: string): Promise<SavedAnalysisReport | null> {
+    const snapshot = await this.firestore
+      .collection('users').doc(uid)
+      .collection('reports').doc(reportId)
+      .get();
+    return snapshot.exists ? snapshot.data() as SavedAnalysisReport : null;
+  }
+
   async release(reservation: UsageReservation): Promise<void> {
     const userReference = this.firestore.collection('users').doc(reservation.uid);
     const usageReference = userReference.collection('usage').doc(reservation.period);
@@ -223,6 +363,8 @@ export class AnalysisRepository {
 
   async usage(principal: VerifiedPrincipal): Promise<AnalysisUsageSummary> {
     await this.ensureProfile(principal);
+    await this.releaseLegacyUploadReservations(principal.uid);
+    await this.releaseStaleAnalysisReservations(principal.uid);
     const period = usagePeriod();
     const userReference = this.firestore.collection('users').doc(principal.uid);
     const [profileSnapshot, usageSnapshot] = await Promise.all([
